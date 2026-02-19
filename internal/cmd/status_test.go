@@ -5,9 +5,16 @@ import (
 	"time"
 
 	"github.com/achronon/cvps/internal/api"
+	"github.com/fatih/color"
 )
 
 func TestColorStatus(t *testing.T) {
+	prevNoColor := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() {
+		color.NoColor = prevNoColor
+	})
+
 	tests := []struct {
 		name   string
 		status string

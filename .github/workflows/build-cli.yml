@@ -1,0 +1,190 @@
+name: Build CVPS CLI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests
+        run: go test -v ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          COMMIT=${{ github.sha }}
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          go build -ldflags "\
+            -X github.com/achronon/cvps/internal/version.Version=${VERSION} \
+            -X github.com/achronon/cvps/internal/version.Commit=${COMMIT} \
+            -X github.com/achronon/cvps/internal/version.Date=${DATE}" \
+            -o cvps-${{ matrix.suffix }} \
+            ./cmd/cvps
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cvps-${{ matrix.suffix }}
+          path: cvps-${{ matrix.suffix }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          for dir in artifacts/cvps-*; do
+            name=$(basename "$dir")
+            cp "$dir/$name" "release/$name"
+            chmod +x "release/$name" 2>/dev/null || true
+          done
+
+          cd release
+          sha256sum cvps-* > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/cvps-*
+            release/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
+
+  homebrew:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') && github.repository == 'Achronon/cvps'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Homebrew formula
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          curl -fsSL "${BASE_URL}/cvps-darwin-arm64" -o /tmp/cvps-darwin-arm64
+          curl -fsSL "${BASE_URL}/cvps-darwin-amd64" -o /tmp/cvps-darwin-amd64
+          curl -fsSL "${BASE_URL}/cvps-linux-arm64" -o /tmp/cvps-linux-arm64
+          curl -fsSL "${BASE_URL}/cvps-linux-amd64" -o /tmp/cvps-linux-amd64
+
+          DARWIN_ARM64_SHA="$(sha256sum /tmp/cvps-darwin-arm64 | awk '{print $1}')"
+          DARWIN_AMD64_SHA="$(sha256sum /tmp/cvps-darwin-amd64 | awk '{print $1}')"
+          LINUX_ARM64_SHA="$(sha256sum /tmp/cvps-linux-arm64 | awk '{print $1}')"
+          LINUX_AMD64_SHA="$(sha256sum /tmp/cvps-linux-amd64 | awk '{print $1}')"
+
+          sed \
+            -e "s/version \"1.0.0\"/version \"${VERSION}\"/" \
+            -e "s/PLACEHOLDER_SHA256_ARM64/${DARWIN_ARM64_SHA}/" \
+            -e "s/PLACEHOLDER_SHA256_AMD64/${DARWIN_AMD64_SHA}/" \
+            -e "s/PLACEHOLDER_SHA256_LINUX_ARM64/${LINUX_ARM64_SHA}/" \
+            -e "s/PLACEHOLDER_SHA256_LINUX_AMD64/${LINUX_AMD64_SHA}/" \
+            docs/homebrew-formula.rb > /tmp/cvps.rb
+
+      - name: Publish to Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN secret is required to publish Formula/cvps.rb"
+            exit 1
+          fi
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Achronon/homebrew-tap.git" /tmp/homebrew-tap
+
+          cd /tmp/homebrew-tap
+          git checkout -B main
+
+          mkdir -p Formula
+          cp /tmp/cvps.rb Formula/cvps.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/cvps.rb
+
+          if git diff --cached --quiet; then
+            echo "No formula changes detected."
+            exit 0
+          fi
+
+          git commit -m "cvps ${TAG}"
+          git push origin main
