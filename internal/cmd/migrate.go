@@ -75,7 +75,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get sandbox: %w", err)
 	}
 
-	if sandbox.Status != "running" {
+	if !isRunningStatus(sandbox.Status) {
 		return fmt.Errorf("sandbox is not running (status: %s). Start it with 'cvps up'", sandbox.Status)
 	}
 
