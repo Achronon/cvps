@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -58,7 +59,9 @@ func NewSocketIOTerminal(rawURL, token, sandboxID string) (*SocketIOTerminal, er
 	}
 
 	dialer := websocket.Dialer{}
-	conn, _, err := dialer.Dial(engineURL, nil)
+	headers := make(http.Header)
+	headers.Set("Authorization", "Bearer "+token)
+	conn, _, err := dialer.Dial(engineURL, headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
@@ -127,7 +130,31 @@ func (t *SocketIOTerminal) handshake() error {
 		return fmt.Errorf("socket.io namespace connect failed: %w", err)
 	}
 
-	return nil
+	// Wait until namespace connect ACK from server.
+	expectedPrefix := "40" + t.namespacePrefix()
+	for {
+		_, data, err := t.conn.ReadMessage()
+		if err != nil {
+			return fmt.Errorf("socket.io handshake failed while waiting for namespace connect: %w", err)
+		}
+
+		packet := string(data)
+		if packet == "" {
+			continue
+		}
+
+		// Engine.IO ping; reply with pong and identical payload.
+		if packet[0] == '2' {
+			if err := t.writePacket("3" + packet[1:]); err != nil {
+				return fmt.Errorf("socket.io handshake failed while replying to ping: %w", err)
+			}
+			continue
+		}
+
+		if strings.HasPrefix(packet, expectedPrefix) {
+			return nil
+		}
+	}
 }
 
 func (t *SocketIOTerminal) Close() error {
@@ -215,7 +242,8 @@ func (t *SocketIOTerminal) Run(stdin io.Reader, stdout io.Writer) error {
 
 			switch packet[0] {
 			case '2':
-				if err := t.writePacket("3"); err != nil {
+				// Engine.IO ping; reply with pong and identical payload.
+				if err := t.writePacket("3" + packet[1:]); err != nil {
 					errChan <- err
 					return
 				}
