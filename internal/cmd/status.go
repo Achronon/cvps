@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -77,7 +78,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		id, err := getCurrentSandboxID()
 		if err != nil {
-			return fmt.Errorf("no sandbox specified and no context found: %w", err)
+			// If no local context exists, fall back to listing all sandboxes.
+			// This is friendlier for first-time users right after login.
+			if strings.Contains(err.Error(), "no sandbox context") {
+				if statusWatch {
+					return watchAllSandboxes(ctx, client)
+				}
+				return listAllSandboxes(ctx, client)
+			}
+			return fmt.Errorf("failed to resolve sandbox context: %w", err)
 		}
 		sandboxID = id
 	}

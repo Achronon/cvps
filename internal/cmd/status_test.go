@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/achronon/cvps/internal/api"
+	"github.com/achronon/cvps/internal/config"
 	"github.com/fatih/color"
 )
 
@@ -162,5 +167,60 @@ func TestPrintSandboxDetails(t *testing.T) {
 			// We can't easily test the output without mocking stdout
 			printSandboxDetails(tt.sandbox)
 		})
+	}
+}
+
+func TestRunStatus_NoContextFallsBackToListAll(t *testing.T) {
+	homeDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", homeDir)
+	defer os.Setenv("HOME", oldHome)
+
+	workDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(workDir)
+	defer os.Chdir(oldWd)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sandboxes" {
+			t.Fatalf("expected /sandboxes path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.SandboxList{
+			Data: []api.Sandbox{
+				{
+					ID:        "sbx-abc123",
+					Name:      "my-project",
+					Status:    "running",
+					CPUCores:  2,
+					MemoryGB:  4,
+					CreatedAt: "2024-01-15T10:30:00Z",
+				},
+			},
+			Total: 1,
+			Page:  1,
+			Limit: 100,
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIBaseURL = server.URL
+	cfg.APIKey = "test-api-key"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	origAll, origJSON, origWatch := statusAll, statusJSON, statusWatch
+	statusAll = false
+	statusJSON = true
+	statusWatch = false
+	t.Cleanup(func() {
+		statusAll, statusJSON, statusWatch = origAll, origJSON, origWatch
+	})
+
+	if err := runStatus(nil, nil); err != nil {
+		t.Fatalf("expected fallback to list all sandboxes, got error: %v", err)
 	}
 }
