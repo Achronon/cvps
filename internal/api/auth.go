@@ -49,7 +49,7 @@ func (c *Client) InitiateDeviceAuth(ctx context.Context) (*DeviceAuthResponse, e
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 

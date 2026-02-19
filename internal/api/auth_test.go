@@ -6,12 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestInitiateDeviceAuth(t *testing.T) {
-	expectedResponse := &DeviceAuthResponse{
+func deviceAuthFixture() *DeviceAuthResponse {
+	return &DeviceAuthResponse{
 		DeviceCode:              "test-device-code",
 		UserCode:                "ABC-123",
 		VerificationURI:         "https://example.com/device",
@@ -19,32 +20,58 @@ func TestInitiateDeviceAuth(t *testing.T) {
 		ExpiresIn:               300,
 		Interval:                5,
 	}
+}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/auth/device" {
-			t.Errorf("Expected path /auth/device, got %s", r.URL.Path)
+func TestInitiateDeviceAuth(t *testing.T) {
+	t.Run("accepts 200 and 201", func(t *testing.T) {
+		expectedResponse := deviceAuthFixture()
+		for _, status := range []int{http.StatusOK, http.StatusCreated} {
+			t.Run(http.StatusText(status), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/auth/device" {
+						t.Errorf("Expected path /auth/device, got %s", r.URL.Path)
+					}
+					if r.Method != "POST" {
+						t.Errorf("Expected POST method, got %s", r.Method)
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					json.NewEncoder(w).Encode(expectedResponse)
+				}))
+				defer server.Close()
+
+				client := NewClient(server.URL, "")
+				response, err := client.InitiateDeviceAuth(context.Background())
+				if err != nil {
+					t.Fatalf("InitiateDeviceAuth failed: %v", err)
+				}
+
+				if response.DeviceCode != expectedResponse.DeviceCode {
+					t.Errorf("Expected device code %s, got %s", expectedResponse.DeviceCode, response.DeviceCode)
+				}
+				if response.UserCode != expectedResponse.UserCode {
+					t.Errorf("Expected user code %s, got %s", expectedResponse.UserCode, response.UserCode)
+				}
+			})
 		}
-		if r.Method != "POST" {
-			t.Errorf("Expected POST method, got %s", r.Method)
+	})
+
+	t.Run("rejects non-2xx", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, "")
+		_, err := client.InitiateDeviceAuth(context.Background())
+		if err == nil {
+			t.Fatal("expected error for non-2xx status")
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(expectedResponse)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "")
-	response, err := client.InitiateDeviceAuth(context.Background())
-	if err != nil {
-		t.Fatalf("InitiateDeviceAuth failed: %v", err)
-	}
-
-	if response.DeviceCode != expectedResponse.DeviceCode {
-		t.Errorf("Expected device code %s, got %s", expectedResponse.DeviceCode, response.DeviceCode)
-	}
-	if response.UserCode != expectedResponse.UserCode {
-		t.Errorf("Expected user code %s, got %s", expectedResponse.UserCode, response.UserCode)
-	}
+		if !strings.Contains(err.Error(), "unexpected status: 400") {
+			t.Fatalf("expected status error, got %v", err)
+		}
+	})
 }
 
 func TestGetCurrentUser(t *testing.T) {
