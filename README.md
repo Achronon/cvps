@@ -93,6 +93,29 @@ cvps status --all
 cvps status sbx-abc123
 ```
 
+### `cvps connect` by name
+
+`cvps connect <arg>` treats `<arg>` as a sandbox ID.
+
+To connect by exact sandbox name, use:
+
+```bash
+cvps connect --name openclaw
+```
+
+If multiple sandboxes share that name, the CLI will ask you to use an explicit ID.
+
+### `websocket: bad handshake` during connect
+
+The backend terminal transport is Socket.IO; raw websocket mode is not supported by the CLI.
+Use SSH (default) and avoid forcing websocket:
+
+```bash
+cvps connect <sandbox-id>
+# or
+cvps connect --name <sandbox-name>
+```
+
 ## Commands
 
 | Command | Description |

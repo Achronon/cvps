@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 
 	"github.com/achronon/cvps/internal/api"
 	"github.com/achronon/cvps/internal/config"
-	"github.com/achronon/cvps/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
 var (
 	connectMethod string
+	connectName   string
 )
 
 var (
@@ -23,31 +24,37 @@ var (
 	connectLoginOAuth = loginWithOAuth
 )
 
+var (
+	connectCUIDLikePattern = regexp.MustCompile(`^c[a-z0-9]{20,}$`)
+)
+
 var connectCmd = &cobra.Command{
 	Use:   "connect [sandbox-id]",
 	Short: "Open terminal to sandbox",
 	Long: `Open an interactive terminal session to a sandbox.
 
-By default, uses SSH if available, falling back to WebSocket
-for environments with restricted SSH access.`,
+By default, uses SSH.
+
+Use either a sandbox ID argument or --name to select a sandbox.`,
 	Example: `  # Connect to current sandbox
   cvps connect
 
   # Connect to specific sandbox
   cvps connect sbx-abc123
 
-  # Force SSH connection
-  cvps connect --method ssh
+  # Connect by exact sandbox name
+  cvps connect --name openclaw
 
-  # Force WebSocket connection
-  cvps connect --method websocket`,
+  # Force SSH connection
+  cvps connect --method ssh`,
 	RunE: runConnect,
 }
 
 func init() {
 	rootCmd.AddCommand(connectCmd)
 
-	connectCmd.Flags().StringVarP(&connectMethod, "method", "m", "", "connection method (ssh|websocket)")
+	connectCmd.Flags().StringVarP(&connectMethod, "method", "m", "", "connection method (ssh|websocket; websocket currently unsupported)")
+	connectCmd.Flags().StringVar(&connectName, "name", "", "sandbox name (exact match, alternative to sandbox ID argument)")
 }
 
 func runConnect(cmd *cobra.Command, args []string) error {
@@ -64,21 +71,30 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	client := api.NewClientFromConfig(cfg)
 	ctx := context.Background()
 
-	// Get sandbox ID
-	sandboxID := ""
-	if len(args) > 0 {
-		sandboxID = args[0]
-	} else {
-		id, err := getCurrentSandboxID()
-		if err != nil {
-			return fmt.Errorf("no sandbox specified: %w", err)
-		}
-		sandboxID = id
+	sandboxID, err := resolveSandboxIDForConnect(ctx, client, args, connectName)
+	if err != nil {
+		return err
 	}
 
 	// Get sandbox info
 	sandbox, err := client.GetSandbox(ctx, sandboxID)
 	if err != nil {
+		if api.IsNotFound(err) {
+			if len(args) > 0 {
+				message := fmt.Sprintf("sandbox not found: %s", args[0])
+				if !looksLikeSandboxID(args[0]) {
+					message += fmt.Sprintf(". If you meant a name, use 'cvps connect --name %s'.", args[0])
+				}
+				return fmt.Errorf(message)
+			}
+
+			if connectName != "" {
+				return fmt.Errorf("sandbox named %q no longer exists. Run 'cvps status --all' and try again", connectName)
+			}
+
+			return fmt.Errorf("sandbox not found: %s", sandboxID)
+		}
+
 		return fmt.Errorf("failed to get sandbox: %w", err)
 	}
 
@@ -86,27 +102,125 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("sandbox is not running (status: %s)", sandbox.Status)
 	}
 
-	// Determine connection method
-	method := connectMethod
-	if method == "" {
-		// Auto-detect: prefer SSH if available
-		if sandbox.SSHHost != "" && isSSHAvailable() {
-			method = "ssh"
-		} else {
-			method = "websocket"
-		}
+	method, err := resolveConnectMethod(connectMethod, sandbox)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("Connecting to sandbox %s via %s...\n", sandbox.Name, method)
 
-	switch method {
-	case "ssh":
-		return connectSSH(sandbox)
-	case "websocket":
-		return connectWebSocket(ctx, client, sandbox, cfg)
-	default:
+	if method != "ssh" {
 		return fmt.Errorf("unknown connection method: %s", method)
 	}
+
+	return connectSSH(sandbox)
+}
+
+func resolveSandboxIDForConnect(ctx context.Context, client *api.Client, args []string, byName string) (string, error) {
+	if len(args) > 0 && byName != "" {
+		return "", fmt.Errorf("provide either a sandbox ID argument or --name, not both")
+	}
+
+	if len(args) > 0 {
+		return args[0], nil
+	}
+
+	if byName != "" {
+		return resolveSandboxIDByName(ctx, client, byName)
+	}
+
+	id, err := getCurrentSandboxID()
+	if err != nil {
+		return "", fmt.Errorf("no sandbox specified: %w", err)
+	}
+
+	return id, nil
+}
+
+func resolveSandboxIDByName(ctx context.Context, client *api.Client, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("sandbox name cannot be empty")
+	}
+
+	sandboxes, err := listAllSandboxesForConnect(ctx, client)
+	if err != nil {
+		return "", fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	matches := make([]api.Sandbox, 0, 2)
+	for _, sandbox := range sandboxes {
+		if strings.EqualFold(strings.TrimSpace(sandbox.Name), name) {
+			matches = append(matches, sandbox)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("sandbox named %q not found. Run 'cvps status --all' to view available sandboxes", name)
+	case 1:
+		return matches[0].ID, nil
+	default:
+		var b strings.Builder
+		fmt.Fprintf(&b, "sandbox name %q is ambiguous. Use a sandbox ID:\n", name)
+		for _, sandbox := range matches {
+			fmt.Fprintf(&b, "  - %s (%s)\n", sandbox.ID, sandbox.Name)
+		}
+		return "", fmt.Errorf(strings.TrimRight(b.String(), "\n"))
+	}
+}
+
+func listAllSandboxesForConnect(ctx context.Context, client *api.Client) ([]api.Sandbox, error) {
+	const pageSize = 100
+	const maxPages = 20
+
+	all := make([]api.Sandbox, 0, pageSize)
+	for page := 1; page <= maxPages; page++ {
+		list, err := client.ListSandboxes(ctx, page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, list.Data...)
+		if len(list.Data) < pageSize || len(all) >= list.Total {
+			break
+		}
+	}
+
+	return all, nil
+}
+
+func resolveConnectMethod(requested string, sandbox *api.Sandbox) (string, error) {
+	method := strings.ToLower(strings.TrimSpace(requested))
+
+	switch method {
+	case "":
+		if sandbox.SSHHost == "" {
+			return "", fmt.Errorf("SSH connection is not available for this sandbox yet. Run 'cvps status %s' and try again", sandbox.ID)
+		}
+		if !isSSHAvailable() {
+			return "", fmt.Errorf("ssh client not found in PATH. Install OpenSSH and rerun 'cvps connect %s'", sandbox.ID)
+		}
+		return "ssh", nil
+	case "ssh":
+		if sandbox.SSHHost == "" {
+			return "", fmt.Errorf("SSH connection is not available for this sandbox")
+		}
+		return "ssh", nil
+	case "websocket":
+		return "", fmt.Errorf("websocket terminal is currently unsupported by this CLI/backend combination. Use SSH instead")
+	default:
+		return "", fmt.Errorf("unknown connection method: %s", requested)
+	}
+}
+
+func looksLikeSandboxID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+
+	return strings.HasPrefix(value, "sbx-") || connectCUIDLikePattern.MatchString(value)
 }
 
 func ensureConnectedAuth(cfg *config.Config) (*config.Config, error) {
@@ -157,45 +271,4 @@ func connectSSH(sandbox *api.Sandbox) error {
 
 	// Replace current process with SSH
 	return syscall.Exec(sshPath, append([]string{"ssh"}, sshArgs...), os.Environ())
-}
-
-func connectWebSocket(ctx context.Context, client *api.Client, sandbox *api.Sandbox, cfg *config.Config) error {
-	// Get WebSocket URL from API
-	wsInfo, err := client.GetTerminalWebSocket(ctx, sandbox.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get terminal connection: %w", err)
-	}
-
-	// Create terminal connection
-	term, err := terminal.NewWebSocketTerminal(wsInfo.URL, wsInfo.Token)
-	if err != nil {
-		return fmt.Errorf("failed to create terminal: %w", err)
-	}
-	defer term.Close()
-
-	// Handle terminal resize
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGWINCH)
-	go func() {
-		for range sigChan {
-			if cols, rows, err := terminal.GetSize(); err == nil {
-				term.Resize(cols, rows)
-			}
-		}
-	}()
-
-	// Set raw mode
-	restore, err := terminal.SetRaw()
-	if err != nil {
-		return fmt.Errorf("failed to set terminal mode: %w", err)
-	}
-	defer restore()
-
-	// Send initial resize
-	if cols, rows, err := terminal.GetSize(); err == nil {
-		term.Resize(cols, rows)
-	}
-
-	// Start I/O forwarding
-	return term.Run(os.Stdin, os.Stdout)
 }

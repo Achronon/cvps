@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
@@ -194,5 +198,169 @@ func TestEnsureConnectedAuth_ReloadNotAuthenticated(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "authentication did not produce credentials") {
 		t.Fatalf("ensureConnectedAuth() error = %q, expected missing credential message", err.Error())
+	}
+}
+
+func TestResolveSandboxIDForConnect_MutuallyExclusiveSelectors(t *testing.T) {
+	_, err := resolveSandboxIDForConnect(context.Background(), nil, []string{"sbx-123"}, "openclaw")
+	if err == nil {
+		t.Fatal("resolveSandboxIDForConnect() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "either a sandbox ID argument or --name") {
+		t.Fatalf("resolveSandboxIDForConnect() error = %q, expected selector conflict message", err.Error())
+	}
+}
+
+func TestResolveSandboxIDByName_SingleMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sandboxes" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "cmlt6ghp0000101dyq5j3d5xu", "name": "openclaw", "status": "RUNNING"},
+			},
+			"total": 1,
+			"page":  1,
+			"limit": 100,
+		})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "cvps_test")
+	sandboxID, err := resolveSandboxIDByName(context.Background(), client, "OpenClaw")
+	if err != nil {
+		t.Fatalf("resolveSandboxIDByName() error = %v, want nil", err)
+	}
+	if sandboxID != "cmlt6ghp0000101dyq5j3d5xu" {
+		t.Fatalf("resolveSandboxIDByName() = %q, want %q", sandboxID, "cmlt6ghp0000101dyq5j3d5xu")
+	}
+}
+
+func TestResolveSandboxIDByName_NoMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{},
+			"total": 0,
+			"page":  1,
+			"limit": 100,
+		})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "cvps_test")
+	_, err := resolveSandboxIDByName(context.Background(), client, "openclaw")
+	if err == nil {
+		t.Fatal("resolveSandboxIDByName() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "Run 'cvps status --all'") {
+		t.Fatalf("resolveSandboxIDByName() error = %q, expected status hint", err.Error())
+	}
+}
+
+func TestResolveSandboxIDByName_Ambiguous(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "cmlt6ghp0000101dyq5j3d5xu", "name": "openclaw", "status": "RUNNING"},
+				{"id": "cmlt6ghp0000101dyq5j3d5xv", "name": "OpenClaw", "status": "RUNNING"},
+			},
+			"total": 2,
+			"page":  1,
+			"limit": 100,
+		})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "cvps_test")
+	_, err := resolveSandboxIDByName(context.Background(), client, "openclaw")
+	if err == nil {
+		t.Fatal("resolveSandboxIDByName() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("resolveSandboxIDByName() error = %q, expected ambiguity message", err.Error())
+	}
+	if !strings.Contains(err.Error(), "cmlt6ghp0000101dyq5j3d5xu") {
+		t.Fatalf("resolveSandboxIDByName() error = %q, expected first candidate", err.Error())
+	}
+	if !strings.Contains(err.Error(), "cmlt6ghp0000101dyq5j3d5xv") {
+		t.Fatalf("resolveSandboxIDByName() error = %q, expected second candidate", err.Error())
+	}
+}
+
+func TestResolveConnectMethod(t *testing.T) {
+	tests := []struct {
+		name     string
+		request  string
+		sandbox  *api.Sandbox
+		want     string
+		wantErr  bool
+		errMatch string
+	}{
+		{
+			name:     "auto without ssh host returns actionable error",
+			request:  "",
+			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: ""},
+			wantErr:  true,
+			errMatch: "SSH connection is not available",
+		},
+		{
+			name:     "websocket is unsupported",
+			request:  "websocket",
+			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: "sbx.example.com"},
+			wantErr:  true,
+			errMatch: "unsupported",
+		},
+		{
+			name:     "ssh without host errors",
+			request:  "ssh",
+			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: ""},
+			wantErr:  true,
+			errMatch: "SSH connection is not available",
+		},
+		{
+			name:     "unknown method errors",
+			request:  "telnet",
+			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: "sbx.example.com"},
+			wantErr:  true,
+			errMatch: "unknown connection method",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveConnectMethod(tt.request, tt.sandbox)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveConnectMethod() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if !strings.Contains(err.Error(), tt.errMatch) {
+					t.Fatalf("resolveConnectMethod() error = %q, expected %q", err.Error(), tt.errMatch)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("resolveConnectMethod() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeSandboxID(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "sbx-abc123", want: true},
+		{value: "cmlt6ghp0000101dyq5j3d5xu", want: true},
+		{value: "openclaw", want: false},
+		{value: "   ", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := looksLikeSandboxID(tt.value); got != tt.want {
+			t.Fatalf("looksLikeSandboxID(%q) = %v, want %v", tt.value, got, tt.want)
+		}
 	}
 }
