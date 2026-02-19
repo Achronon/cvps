@@ -284,7 +284,7 @@ func (t *SocketIOTerminal) Run(stdin io.Reader, stdout io.Writer) error {
 
 			if err := t.emit("terminal:input", terminalInputPayload{
 				SessionID: t.getSessionID(),
-				Data:      string(buf[:n]),
+				Data:      base64.StdEncoding.EncodeToString(buf[:n]),
 			}); err != nil {
 				errChan <- err
 				return
