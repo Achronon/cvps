@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strings"
 	"syscall"
 
 	"github.com/achronon/cvps/internal/api"
 	"github.com/achronon/cvps/internal/config"
+	"github.com/achronon/cvps/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -53,7 +55,7 @@ Use either a sandbox ID argument or --name to select a sandbox.`,
 func init() {
 	rootCmd.AddCommand(connectCmd)
 
-	connectCmd.Flags().StringVarP(&connectMethod, "method", "m", "", "connection method (ssh|websocket; websocket currently unsupported)")
+	connectCmd.Flags().StringVarP(&connectMethod, "method", "m", "", "connection method (ssh|websocket)")
 	connectCmd.Flags().StringVar(&connectName, "name", "", "sandbox name (exact match, alternative to sandbox ID argument)")
 }
 
@@ -109,11 +111,14 @@ func runConnect(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Connecting to sandbox %s via %s...\n", sandbox.Name, method)
 
-	if method != "ssh" {
+	switch method {
+	case "ssh":
+		return connectSSH(sandbox)
+	case "websocket":
+		return connectWebSocket(ctx, client, sandbox)
+	default:
 		return fmt.Errorf("unknown connection method: %s", method)
 	}
-
-	return connectSSH(sandbox)
 }
 
 func resolveSandboxIDForConnect(ctx context.Context, client *api.Client, args []string, byName string) (string, error) {
@@ -195,20 +200,17 @@ func resolveConnectMethod(requested string, sandbox *api.Sandbox) (string, error
 
 	switch method {
 	case "":
-		if sandbox.SSHHost == "" {
-			return "", fmt.Errorf("SSH connection is not available for this sandbox yet. Run 'cvps status %s' and try again", sandbox.ID)
+		if sandbox.SSHHost != "" && isSSHAvailable() {
+			return "ssh", nil
 		}
-		if !isSSHAvailable() {
-			return "", fmt.Errorf("ssh client not found in PATH. Install OpenSSH and rerun 'cvps connect %s'", sandbox.ID)
-		}
-		return "ssh", nil
+		return "websocket", nil
 	case "ssh":
 		if sandbox.SSHHost == "" {
 			return "", fmt.Errorf("SSH connection is not available for this sandbox")
 		}
 		return "ssh", nil
 	case "websocket":
-		return "", fmt.Errorf("websocket terminal is currently unsupported by this CLI/backend combination. Use SSH instead")
+		return "websocket", nil
 	default:
 		return "", fmt.Errorf("unknown connection method: %s", requested)
 	}
@@ -271,4 +273,45 @@ func connectSSH(sandbox *api.Sandbox) error {
 
 	// Replace current process with SSH
 	return syscall.Exec(sshPath, append([]string{"ssh"}, sshArgs...), os.Environ())
+}
+
+func connectWebSocket(ctx context.Context, client *api.Client, sandbox *api.Sandbox) error {
+	// Get terminal websocket info from API
+	wsInfo, err := client.GetTerminalWebSocket(ctx, sandbox.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get terminal connection: %w", err)
+	}
+
+	// Create Socket.IO terminal connection
+	term, err := terminal.NewSocketIOTerminal(wsInfo.URL, wsInfo.Token, sandbox.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create terminal: %w", err)
+	}
+	defer term.Close()
+
+	// Handle terminal resize
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGWINCH)
+	go func() {
+		for range sigChan {
+			if cols, rows, err := terminal.GetSize(); err == nil {
+				_ = term.Resize(cols, rows)
+			}
+		}
+	}()
+
+	// Set raw mode
+	restore, err := terminal.SetRaw()
+	if err != nil {
+		return fmt.Errorf("failed to set terminal mode: %w", err)
+	}
+	defer restore()
+
+	// Send initial resize
+	if cols, rows, err := terminal.GetSize(); err == nil {
+		_ = term.Resize(cols, rows)
+	}
+
+	// Start I/O forwarding
+	return term.Run(os.Stdin, os.Stdout)
 }

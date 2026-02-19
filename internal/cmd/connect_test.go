@@ -299,18 +299,16 @@ func TestResolveConnectMethod(t *testing.T) {
 		errMatch string
 	}{
 		{
-			name:     "auto without ssh host returns actionable error",
-			request:  "",
-			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: ""},
-			wantErr:  true,
-			errMatch: "SSH connection is not available",
+			name:    "auto without ssh host falls back to websocket",
+			request: "",
+			sandbox: &api.Sandbox{ID: "sbx-abc123", SSHHost: ""},
+			want:    "websocket",
 		},
 		{
-			name:     "websocket is unsupported",
-			request:  "websocket",
-			sandbox:  &api.Sandbox{ID: "sbx-abc123", SSHHost: "sbx.example.com"},
-			wantErr:  true,
-			errMatch: "unsupported",
+			name:    "websocket explicit method",
+			request: "websocket",
+			sandbox: &api.Sandbox{ID: "sbx-abc123", SSHHost: "sbx.example.com"},
+			want:    "websocket",
 		},
 		{
 			name:     "ssh without host errors",

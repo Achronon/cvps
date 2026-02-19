@@ -107,14 +107,8 @@ If multiple sandboxes share that name, the CLI will ask you to use an explicit I
 
 ### `websocket: bad handshake` during connect
 
-The backend terminal transport is Socket.IO; raw websocket mode is not supported by the CLI.
-Use SSH (default) and avoid forcing websocket:
-
-```bash
-cvps connect <sandbox-id>
-# or
-cvps connect --name <sandbox-name>
-```
+Upgrade to the latest CLI. Newer releases use a Socket.IO-compatible websocket terminal
+fallback when SSH details are unavailable.
 
 ## Commands
 
