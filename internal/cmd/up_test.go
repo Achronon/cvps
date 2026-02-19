@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -361,6 +362,9 @@ func TestGetCurrentSandboxID(t *testing.T) {
 	_, err := getCurrentSandboxID()
 	if err == nil {
 		t.Fatal("Expected error when no context exists")
+	}
+	if !strings.Contains(err.Error(), "pass a sandbox ID as the first argument") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Save context

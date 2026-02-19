@@ -202,7 +202,7 @@ func getCurrentSandboxID() (string, error) {
 		return "", err
 	}
 	if ctx == nil {
-		return "", fmt.Errorf("no sandbox context. Run 'cvps up' first or specify --sandbox-id")
+		return "", fmt.Errorf("no sandbox context. Run 'cvps up' first or pass a sandbox ID as the first argument")
 	}
 	return ctx.SandboxID, nil
 }

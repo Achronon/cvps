@@ -15,7 +15,7 @@ brew install cvps
 ### Quick Install Script (macOS/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Achronon/claudevps/main/cli/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Achronon/cvps/main/scripts/install.sh | sh
 ```
 
 ### Linux
@@ -59,6 +59,9 @@ cvps login
 # Create sandbox
 cvps up --name my-project
 
+# Check status of current context sandbox
+cvps status
+
 # Connect
 cvps connect
 
@@ -67,6 +70,27 @@ cvps sync
 
 # Terminate
 cvps down
+```
+
+## Troubleshooting
+
+### `cvps status` says no sandbox/context found
+
+If you see:
+
+`no sandbox specified and no context found: no sandbox context...`
+
+Use one of these:
+
+```bash
+# Create a sandbox and save local context
+cvps up
+
+# Or inspect all your sandboxes
+cvps status --all
+
+# Or query a specific sandbox by ID
+cvps status sbx-abc123
 ```
 
 ## Commands
