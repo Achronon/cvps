@@ -27,7 +27,8 @@ var statusCmd = &cobra.Command{
 	Long: `Show the status of sandboxes.
 
 Without arguments, shows the status of the current context sandbox
-(determined by .cvps.yaml in the current directory).`,
+(determined by .cvps.yaml in the current directory).
+If no local context exists, falls back to listing all sandboxes.`,
 	Example: `  # Show current sandbox status
   cvps status
 
@@ -78,15 +79,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		id, err := getCurrentSandboxID()
 		if err != nil {
-			// If no local context exists, fall back to listing all sandboxes.
-			// This is friendlier for first-time users right after login.
-			if strings.Contains(err.Error(), "no sandbox context") {
-				if statusWatch {
-					return watchAllSandboxes(ctx, client)
-				}
-				return listAllSandboxes(ctx, client)
+			if statusWatch {
+				fmt.Println("No current sandbox context found. Watching all sandboxes instead.")
+				return watchAllSandboxes(ctx, client)
 			}
-			return fmt.Errorf("failed to resolve sandbox context: %w", err)
+
+			fmt.Println("No current sandbox context found. Showing all sandboxes:")
+			return listAllSandboxes(ctx, client)
 		}
 		sandboxID = id
 	}
@@ -164,10 +163,21 @@ func printSandboxDetails(s *api.Sandbox) {
 		fmt.Printf("Last Active: %s\n", formatTime(s.LastActive))
 	}
 
-	if s.Status == "running" && s.SSHHost != "" {
+	if isRunningStatus(s.Status) && s.SSHHost != "" {
 		fmt.Println()
 		fmt.Println("Connection:")
 		fmt.Printf("  SSH: ssh %s@%s -p %d\n", s.SSHUser, s.SSHHost, s.SSHPort)
+		if s.Connectivity.SSHProxyRequired {
+			fmt.Println("  Note: ProxyCommand is required for this route (cloudflared).")
+		}
+		return
+	}
+
+	if isRunningStatus(s.Status) && s.SSHHost == "" {
+		fmt.Println()
+		fmt.Println("Connection:")
+		fmt.Println("  SSH endpoint not ready yet.")
+		fmt.Printf("  Use: cvps connect %s\n", s.ID)
 	}
 }
 
@@ -218,7 +228,7 @@ func watchAllSandboxes(ctx context.Context, client *api.Client) error {
 }
 
 func colorStatus(status string) string {
-	switch status {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "running":
 		return color.GreenString(status)
 	case "provisioning", "starting":

@@ -18,6 +18,8 @@ brew install cvps
 curl -fsSL https://raw.githubusercontent.com/Achronon/cvps/main/scripts/install.sh | sh
 ```
 
+The installer verifies SHA256 checksums from the GitHub release before install.
+
 ### Linux
 
 ```bash
@@ -28,6 +30,14 @@ chmod +x /usr/local/bin/cvps
 # ARM64
 curl -L https://github.com/Achronon/cvps/releases/latest/download/cvps-linux-arm64 -o /usr/local/bin/cvps
 chmod +x /usr/local/bin/cvps
+```
+
+### Alpine / Minimal Linux
+
+```bash
+apk add --no-cache curl ca-certificates
+update-ca-certificates
+curl -fsSL https://raw.githubusercontent.com/Achronon/cvps/main/scripts/install.sh | sh
 ```
 
 ### Windows
@@ -59,7 +69,7 @@ cvps login
 # Create sandbox
 cvps up --name my-project
 
-# Check status of current context sandbox
+# Check status
 cvps status
 
 # Connect
@@ -72,43 +82,32 @@ cvps sync
 cvps down
 ```
 
-## Troubleshooting
+If `cvps status` says no sandbox context, either create one with `cvps up`, list all with
+`cvps status --all`, or pass an explicit sandbox ID like `cvps status sbx-abc123`.
 
-### `cvps status` says no sandbox/context found
-
-If you see:
-
-`no sandbox specified and no context found: no sandbox context...`
-
-Use one of these:
+If `cvps connect <sandbox-id>` reports `sandbox is not running (status: RUNNING)`,
+upgrade to `v0.1.4+`:
 
 ```bash
-# Create a sandbox and save local context
-cvps up
+brew update
+brew upgrade cvps
+cvps version
+```
 
-# Or inspect all your sandboxes
+Then connect directly from the `status --all` output:
+
+```bash
 cvps status --all
-
-# Or query a specific sandbox by ID
-cvps status sbx-abc123
+cvps connect <sandbox-id>
+# or by exact name
+cvps connect --name <sandbox-name>
 ```
 
-### `cvps connect` by name
+`cvps connect <arg>` treats `<arg>` as a sandbox ID. To connect by name, use
+`cvps connect --name <sandbox-name>`.
 
-`cvps connect <arg>` treats `<arg>` as a sandbox ID.
-
-To connect by exact sandbox name, use:
-
-```bash
-cvps connect --name openclaw
-```
-
-If multiple sandboxes share that name, the CLI will ask you to use an explicit ID.
-
-### `websocket: bad handshake` during connect
-
-Upgrade to the latest CLI. Newer releases use a Socket.IO-compatible websocket terminal
-fallback when SSH details are unavailable.
+`--method websocket` is currently unsupported in the CLI because the backend terminal
+transport is Socket.IO. Use the default SSH method.
 
 ## Commands
 
@@ -133,9 +132,9 @@ api_key: cvps_xxx
 api_base_url: https://api.claudevps.com
 
 defaults:
-  cpu_cores: 2
-  memory_gb: 4
-  storage_gb: 20
+  cpu_cores: 1
+  memory_gb: 2
+  storage_gb: 5
 ```
 
 ## Environment Variables

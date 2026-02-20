@@ -40,10 +40,10 @@ func DefaultConfig() *Config {
 	return &Config{
 		APIBaseURL: "https://api.claudevps.com",
 		Defaults: SandboxDefaults{
-			CPUCores:  2,
-			MemoryGB:  4,
-			StorageGB: 20,
-			Image:     "ghcr.io/achronon/claude-sandbox:latest",
+			CPUCores:  1,
+			MemoryGB:  2,
+			StorageGB: 5,
+			Image:     "ghcr.io/claudevps/claude-sandbox:latest",
 		},
 		Sync: SyncConfig{
 			IgnorePatterns: []string{

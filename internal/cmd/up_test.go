@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"strings"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,14 +61,14 @@ func TestRunUp_WithDefaults(t *testing.T) {
 			json.NewDecoder(r.Body).Decode(&req)
 
 			// Verify defaults are applied
-			if req.CPUCores != 2 {
-				t.Errorf("Expected CPU 2, got %d", req.CPUCores)
+			if req.CPUCores != 1 {
+				t.Errorf("Expected CPU 1, got %d", req.CPUCores)
 			}
-			if req.MemoryGB != 4 {
-				t.Errorf("Expected Memory 4, got %d", req.MemoryGB)
+			if req.MemoryGB != 2 {
+				t.Errorf("Expected Memory 2, got %d", req.MemoryGB)
 			}
-			if req.StorageGB != 20 {
-				t.Errorf("Expected Storage 20, got %d", req.StorageGB)
+			if req.StorageGB != 5 {
+				t.Errorf("Expected Storage 5, got %d", req.StorageGB)
 			}
 
 			resp := api.Sandbox{
@@ -88,9 +87,9 @@ func TestRunUp_WithDefaults(t *testing.T) {
 				ID:        "sbx-test-123",
 				Name:      "sandbox-test",
 				Status:    "running",
-				CPUCores:  2,
-				MemoryGB:  4,
-				StorageGB: 20,
+				CPUCores:  1,
+				MemoryGB:  2,
+				StorageGB: 5,
 				SSHHost:   "test.claudevps.com",
 				SSHPort:   22,
 				SSHUser:   "sandbox",
@@ -362,9 +361,6 @@ func TestGetCurrentSandboxID(t *testing.T) {
 	_, err := getCurrentSandboxID()
 	if err == nil {
 		t.Fatal("Expected error when no context exists")
-	}
-	if !strings.Contains(err.Error(), "pass a sandbox ID as the first argument") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Save context

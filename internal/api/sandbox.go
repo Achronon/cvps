@@ -19,6 +19,12 @@ type Sandbox struct {
 	SSHHost string `json:"sshHost,omitempty"`
 	SSHPort int    `json:"sshPort,omitempty"`
 	SSHUser string `json:"sshUser,omitempty"`
+
+	Connectivity struct {
+		SSHDirect         bool `json:"sshDirect"`
+		SSHProxyRequired  bool `json:"sshProxyRequired"`
+		WebsocketTerminal bool `json:"websocketTerminal"`
+	} `json:"connectivity"`
 }
 
 type CreateSandboxRequest struct {

@@ -13,20 +13,20 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("expected APIBaseURL to be https://api.claudevps.com, got %s", cfg.APIBaseURL)
 	}
 
-	if cfg.Defaults.CPUCores != 2 {
-		t.Errorf("expected CPUCores to be 2, got %d", cfg.Defaults.CPUCores)
+	if cfg.Defaults.CPUCores != 1 {
+		t.Errorf("expected CPUCores to be 1, got %d", cfg.Defaults.CPUCores)
 	}
 
-	if cfg.Defaults.MemoryGB != 4 {
-		t.Errorf("expected MemoryGB to be 4, got %d", cfg.Defaults.MemoryGB)
+	if cfg.Defaults.MemoryGB != 2 {
+		t.Errorf("expected MemoryGB to be 2, got %d", cfg.Defaults.MemoryGB)
 	}
 
-	if cfg.Defaults.StorageGB != 20 {
-		t.Errorf("expected StorageGB to be 20, got %d", cfg.Defaults.StorageGB)
+	if cfg.Defaults.StorageGB != 5 {
+		t.Errorf("expected StorageGB to be 5, got %d", cfg.Defaults.StorageGB)
 	}
 
-	if cfg.Defaults.Image != "ghcr.io/achronon/claude-sandbox:latest" {
-		t.Errorf("expected Image to be ghcr.io/achronon/claude-sandbox:latest, got %s", cfg.Defaults.Image)
+	if cfg.Defaults.Image != "ghcr.io/claudevps/claude-sandbox:latest" {
+		t.Errorf("expected Image to be ghcr.io/claudevps/claude-sandbox:latest, got %s", cfg.Defaults.Image)
 	}
 
 	if cfg.Sync.Mode != "mutagen" {

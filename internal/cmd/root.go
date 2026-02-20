@@ -21,6 +21,7 @@ var rootCmd = &cobra.Command{
 Connect your local development environment to cloud-hosted sandbox instances
 running on claudevps.com. Provision, sync, and interact with your sandboxes
 from anywhere.`,
+	SilenceUsage: true,
 }
 
 // Execute executes the root command

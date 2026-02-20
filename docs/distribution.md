@@ -27,7 +27,7 @@ brew install cvps
 
 ### 2) Add GitHub secret for tap publishing
 
-In `Achronon/claudevps`, add repository secret:
+In `Achronon/cvps`, add repository secret:
 
 - `HOMEBREW_TAP_TOKEN`
 
@@ -65,7 +65,7 @@ brew install cvps
 ### Curl installer (macOS/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Achronon/claudevps/main/cli/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Achronon/cvps/main/scripts/install.sh | sh
 ```
 
 ### Direct binaries
