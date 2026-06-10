@@ -23,6 +23,7 @@ var (
 	upDetach      bool
 	upDedicatedIP bool
 	upAcceptAup   bool
+	upProfile     string
 )
 
 var upCmd = &cobra.Command{
@@ -42,7 +43,10 @@ available for connections once provisioning completes.`,
   cvps up --detach
 
   # Create with a dedicated egress IP (requires accepting the AUP)
-  cvps up --dedicated-ip --accept-aup`,
+  cvps up --dedicated-ip --accept-aup
+
+  # Provision from a specific runtime profile (e.g. an agent service)
+  cvps up --profile cortex`,
 	RunE: runUp,
 }
 
@@ -56,6 +60,7 @@ func init() {
 	upCmd.Flags().BoolVarP(&upDetach, "detach", "d", false, "return immediately without waiting")
 	upCmd.Flags().BoolVar(&upDedicatedIP, "dedicated-ip", false, "request a dedicated egress IP (requires --accept-aup)")
 	upCmd.Flags().BoolVar(&upAcceptAup, "accept-aup", false, "accept the dedicated-IP / outbound-email Acceptable Use Policy")
+	upCmd.Flags().StringVar(&upProfile, "profile", "", "runtime profile slug (e.g. cortex); default is the server-side default profile")
 }
 
 func runUp(cmd *cobra.Command, args []string) error {
@@ -77,6 +82,21 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	client := api.NewClientFromConfig(cfg)
+	ctx := context.Background()
+
+	// Resolve --profile slug to the full profile up-front: we need its id for the
+	// create request and its mode to pick the right post-create UX.
+	var profile *api.RuntimeProfile
+	if upProfile != "" {
+		var err error
+		profile, err = client.GetRuntimeProfileBySlug(ctx, upProfile)
+		if err != nil {
+			if api.IsNotFound(err) {
+				return fmt.Errorf("runtime profile not found: %s", upProfile)
+			}
+			return fmt.Errorf("failed to resolve runtime profile %q: %w", upProfile, err)
+		}
+	}
 
 	// Build create request
 	req := &api.CreateSandboxRequest{
@@ -86,6 +106,9 @@ func runUp(cmd *cobra.Command, args []string) error {
 		StorageGB:      upStorage,
 		UseDedicatedIp: upDedicatedIP,
 		AcceptedAup:    upAcceptAup,
+	}
+	if profile != nil {
+		req.RuntimeProfileID = profile.ID
 	}
 
 	// Apply defaults
@@ -105,7 +128,6 @@ func runUp(cmd *cobra.Command, args []string) error {
 	// Create sandbox
 	fmt.Printf("Creating sandbox '%s'...\n", req.Name)
 
-	ctx := context.Background()
 	sandbox, err := client.CreateSandbox(ctx, req)
 	if err != nil {
 		if hint := createErrorHint(err); hint != "" {
@@ -117,6 +139,15 @@ func runUp(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Sandbox created: %s\n", sandbox.ID)
 	if ip := dedicatedIPOf(sandbox); ip != "" {
 		fmt.Printf("Dedicated IP: %s\n", ip)
+	}
+
+	// Service profiles gate readiness on in-sandbox model auth (/readyz is 503 until
+	// e.g. codex auth.json exists), so polling for RUNNING would sit red for no
+	// reason. Save context first — the id-less next steps depend on it.
+	if isServiceProfile(profile, sandbox) {
+		saveLocalContext(sandbox.ID, sandbox.Name)
+		printServiceBootstrapSteps(sandbox.ID)
+		return nil
 	}
 
 	if upDetach {
@@ -190,8 +221,34 @@ func createErrorHint(err error) string {
 		return "A verified phone number is required for dedicated-IP sandboxes. Verify\nyour phone in the dashboard under Settings, then retry."
 	case "mfa_required":
 		return "Multi-factor authentication is required for dedicated-IP sandboxes.\nEnable MFA in the dashboard under Settings, then retry."
+	case "unsupported_runtime_for_create":
+		return "This runtime profile isn't enabled for self-serve creation. Gated\nprofiles (e.g. agent services like cortex) need the operator to enable\nthem (SELF_SERVE_EXTRA_RUNTIME_SLUGS on the backend)."
 	}
 	return ""
+}
+
+// isServiceProfile reports whether the sandbox runs a SERVICE-mode profile, using
+// the resolved profile when --profile was given and the create response otherwise.
+func isServiceProfile(profile *api.RuntimeProfile, sandbox *api.Sandbox) bool {
+	if sandbox != nil && sandbox.ServiceMode {
+		return true
+	}
+	if profile != nil && strings.EqualFold(profile.Mode, "SERVICE") {
+		return true
+	}
+	return false
+}
+
+func printServiceBootstrapSteps(sandboxID string) {
+	fmt.Println("\nService sandbox is provisioning. It will stay NOT READY until its model")
+	fmt.Println("auth is set up inside the sandbox (readiness gates on it).")
+	fmt.Println("\nBootstrap:")
+	fmt.Printf("  cvps connect %s        - open a terminal (works before ready)\n", sandboxID)
+	fmt.Println("    then inside: codex login --device-auth")
+	fmt.Println("\nThen:")
+	fmt.Println("  cvps status            - watch it turn RUNNING once auth lands")
+	fmt.Println("  cvps logs              - recent service logs")
+	fmt.Println("  cvps restart           - bounce the workload (when RUNNING)")
 }
 
 func dedicatedIPOf(sandbox *api.Sandbox) string {
