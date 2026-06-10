@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/achronon/cvps/internal/api"
 	"github.com/achronon/cvps/internal/terminal"
@@ -351,6 +353,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 	filter := newMarkerFilter(os.Stdout, markers)
 
 	if err := term.Run(stdin, filter); err != nil {
+		if errors.Is(err, syscall.EPIPE) {
+			// The consumer of our piped stdout exited early (e.g.
+			// `cvps exec sbx -- yes | head -n1`). Mirror shell SIGPIPE
+			// semantics: stop the session, exit 141.
+			_ = term.Close()
+			os.Exit(141)
+		}
 		return fmt.Errorf("exec failed: %w", err)
 	}
 
