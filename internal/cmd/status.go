@@ -158,6 +158,11 @@ func printSandboxDetails(s *api.Sandbox) {
 	fmt.Printf("  Storage: %d GB\n", s.StorageGB)
 	fmt.Println()
 
+	if ip := dedicatedIPOf(s); ip != "" {
+		fmt.Printf("Dedicated IP: %s\n", ip)
+		fmt.Println()
+	}
+
 	fmt.Printf("Created: %s\n", formatTime(s.CreatedAt))
 	if s.LastActive != "" {
 		fmt.Printf("Last Active: %s\n", formatTime(s.LastActive))

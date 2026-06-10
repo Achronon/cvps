@@ -5,6 +5,13 @@ import (
 	"fmt"
 )
 
+type SandboxDedicatedIp struct {
+	ID string `json:"id"`
+	// Null until the coordination claim resolves, so keep it a plain
+	// string ("" when absent) rather than failing decode.
+	IPAddress string `json:"ipAddress"`
+}
+
 type Sandbox struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -14,6 +21,10 @@ type Sandbox struct {
 	StorageGB  int    `json:"storageGb"`
 	CreatedAt  string `json:"createdAt"`
 	LastActive string `json:"lastActiveAt,omitempty"`
+
+	// Dedicated egress IP, when one is assigned (auto-claimed from the
+	// plan's included IP or explicitly requested with useDedicatedIp).
+	DedicatedIp *SandboxDedicatedIp `json:"dedicatedIp,omitempty"`
 
 	// Connection info (when running)
 	SSHHost string `json:"sshHost,omitempty"`
@@ -32,6 +43,11 @@ type CreateSandboxRequest struct {
 	CPUCores  int    `json:"cpuCores,omitempty"`
 	MemoryGB  int    `json:"memoryGb,omitempty"`
 	StorageGB int    `json:"storageGb,omitempty"`
+
+	// Explicitly request a dedicated egress IP. The backend requires
+	// AcceptedAup alongside it (and for mail-capable runtimes).
+	UseDedicatedIp bool `json:"useDedicatedIp,omitempty"`
+	AcceptedAup    bool `json:"acceptedAup,omitempty"`
 }
 
 type SandboxList struct {
