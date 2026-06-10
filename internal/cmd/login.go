@@ -30,7 +30,7 @@ By default, opens a browser for OAuth authentication.
 For headless/agent use, pass the token on stdin with --with-token so it
 never appears on the command line:
 
-  cvps token create --name agent-x | cvps login --with-token
+  op read "op://vault/cvps/token" | cvps login --with-token
 
 Alternatively skip 'login' entirely: set CVPS_API_TOKEN in the
 environment, or set token_command in ~/.cvps/config.yaml (e.g.
@@ -104,7 +104,7 @@ func readTokenFromStdin(stdin io.Reader) (string, error) {
 	}
 	token := strings.TrimSpace(line)
 	if token == "" {
-		return "", fmt.Errorf("no token provided on stdin (pipe it in, e.g. 'cvps token create --name agent-x | cvps login --with-token')")
+		return "", fmt.Errorf("no token provided on stdin (pipe it in, e.g. 'op read op://vault/cvps/token | cvps login --with-token')")
 	}
 	return token, nil
 }
