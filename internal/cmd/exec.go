@@ -106,10 +106,13 @@ func newExecMarkers() (*execMarkers, error) {
 // builtins that would otherwise kill the wrapper before the rc marker
 // prints (exit 7, exec false), and the /dev/null stdin prevents
 // stdin-reading commands (cat, grep with no files, prompts) from
-// hanging forever since cvps exec sends no further input.
+// hanging forever since cvps exec sends no further input. set +e guards
+// against a remote shell with errexit enabled (e.g. from .bashrc):
+// without it a non-zero subshell would kill the wrapper before the rc
+// marker prints.
 func buildRemoteCommand(m *execMarkers, userCmd string) string {
 	return fmt.Sprintf(
-		"stty -echo 2>/dev/null; printf '%%s%%s\\n' '__CVPS_EXEC_BEGIN_' '%s__'; ( %s ) </dev/null; __cvps_rc=$?; printf '\\n%%s%%s%%d__\\n' '__CVPS_EXEC_RC_' '%s_' \"$__cvps_rc\"; exit \"$__cvps_rc\"\n",
+		"set +e 2>/dev/null; stty -echo 2>/dev/null; printf '%%s%%s\\n' '__CVPS_EXEC_BEGIN_' '%s__'; ( %s ) </dev/null; __cvps_rc=$?; printf '\\n%%s%%s%%d__\\n' '__CVPS_EXEC_RC_' '%s_' \"$__cvps_rc\"; exit \"$__cvps_rc\"\n",
 		m.nonce, userCmd, m.nonce,
 	)
 }

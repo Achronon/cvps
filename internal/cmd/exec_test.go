@@ -125,6 +125,9 @@ func TestBuildRemoteCommandNeverContainsMarkerLiterals(t *testing.T) {
 	if !strings.Contains(line, "( "+shellQuote([]string{"ls", "/workspace"})+" )") {
 		t.Error("user command must run in a subshell so exit/exec builtins cannot kill the wrapper before the rc marker prints")
 	}
+	if !strings.HasPrefix(line, "set +e ") {
+		t.Error("wrapper must disable errexit first so a non-zero subshell cannot kill it before the rc marker prints")
+	}
 }
 
 // feedFilter writes the stream to the filter in the given chunk size.
