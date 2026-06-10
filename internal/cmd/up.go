@@ -24,6 +24,8 @@ var (
 	upDedicatedIP bool
 	upAcceptAup   bool
 	upProfile     string
+	upSecrets     []string
+	upEnv         []string
 )
 
 var upCmd = &cobra.Command{
@@ -46,7 +48,10 @@ available for connections once provisioning completes.`,
   cvps up --dedicated-ip --accept-aup
 
   # Provision from a specific runtime profile (e.g. an agent service)
-  cvps up --profile cortex`,
+  cvps up --profile cortex
+
+  # Attach existing tenant secrets and set env overrides at create time
+  cvps up --profile cortex --name cortex-brain --secret TELEGRAM_BOT_TOKEN --env CAPTURE_MODE=auto`,
 	RunE: runUp,
 }
 
@@ -61,6 +66,8 @@ func init() {
 	upCmd.Flags().BoolVar(&upDedicatedIP, "dedicated-ip", false, "request a dedicated egress IP (requires --accept-aup)")
 	upCmd.Flags().BoolVar(&upAcceptAup, "accept-aup", false, "accept the dedicated-IP / outbound-email Acceptable Use Policy")
 	upCmd.Flags().StringVar(&upProfile, "profile", "", "runtime profile slug (e.g. cortex); default is the server-side default profile")
+	upCmd.Flags().StringArrayVar(&upSecrets, "secret", nil, "attach an existing tenant secret by key (repeatable; see 'cvps secret list')")
+	upCmd.Flags().StringArrayVar(&upEnv, "env", nil, "set a non-secret env override as KEY=VALUE (repeatable; keys must be allowlisted by the runtime profile)")
 }
 
 func runUp(cmd *cobra.Command, args []string) error {
@@ -98,6 +105,20 @@ func runUp(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Parse --env overrides before any creation side effects.
+	envOverrides, err := parseEnvOverrides(upEnv)
+	if err != nil {
+		return err
+	}
+
+	// Resolve --secret keys to TenantSecret ids up-front: attach is
+	// create-time only, so an unknown key must fail fast with no sandbox
+	// half-created.
+	secretIDs, err := resolveSecretKeys(ctx, client, upSecrets)
+	if err != nil {
+		return err
+	}
+
 	// Build create request
 	req := &api.CreateSandboxRequest{
 		Name:           upName,
@@ -106,6 +127,8 @@ func runUp(cmd *cobra.Command, args []string) error {
 		StorageGB:      upStorage,
 		UseDedicatedIp: upDedicatedIP,
 		AcceptedAup:    upAcceptAup,
+		SecretIDs:      secretIDs,
+		EnvOverrides:   envOverrides,
 	}
 	if profile != nil {
 		req.RuntimeProfileID = profile.ID
@@ -199,6 +222,74 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	s.Stop()
 	return fmt.Errorf("timeout waiting for sandbox to be ready (waited %s)", timeout)
+}
+
+// parseEnvOverrides turns repeatable --env KEY=VALUE flags into the
+// envOverrides map. Keys are validated client-side against the env-var name
+// shape; the runtime profile's tenantEnvKeys allowlist is enforced by the
+// backend (its 400 lists the allowed keys).
+func parseEnvOverrides(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+
+	overrides := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		key, value, found := strings.Cut(pair, "=")
+		if !found {
+			return nil, fmt.Errorf("invalid --env %q: expected KEY=VALUE", pair)
+		}
+		if !secretKeyPattern.MatchString(key) {
+			return nil, fmt.Errorf("invalid --env key %q: must be a valid environment variable name (uppercase letters, numbers, underscores)", key)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("invalid --env %q: value must not be empty", pair)
+		}
+		if _, dup := overrides[key]; dup {
+			return nil, fmt.Errorf("duplicate --env key %q", key)
+		}
+		overrides[key] = value
+	}
+	return overrides, nil
+}
+
+// resolveSecretKeys resolves repeatable --secret <KEY> flags to TenantSecret
+// ids, failing fast (before sandbox creation) on any unknown key.
+func resolveSecretKeys(ctx context.Context, client *api.Client, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	for _, key := range keys {
+		if !secretKeyPattern.MatchString(key) {
+			return nil, fmt.Errorf("invalid --secret key %q: must be a valid environment variable name (uppercase letters, numbers, underscores)", key)
+		}
+	}
+
+	// One list call resolves all keys (and dedupes repeats).
+	secrets, err := client.ListAllSecrets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list secrets: %w", err)
+	}
+	byKey := make(map[string]string, len(secrets))
+	for _, s := range secrets {
+		byKey[s.Key] = s.ID
+	}
+
+	var ids []string
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		id, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("no secret found with key %s.\n\nCreate it first:\n  cvps secret create %s\nor list available keys with 'cvps secret list'", key, key)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // createErrorHint maps backend error codes from POST /sandboxes to

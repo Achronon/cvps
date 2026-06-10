@@ -153,6 +153,7 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Secret created: %s (%s)\n", secret.Key, secret.ID)
+	fmt.Printf("\nAttach it to a new sandbox with:\n  cvps up --secret %s\n", secret.Key)
 	return nil
 }
 
