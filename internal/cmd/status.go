@@ -150,6 +150,16 @@ func printSandboxDetails(s *api.Sandbox) {
 	fmt.Printf("Sandbox: %s\n", s.Name)
 	fmt.Printf("ID:      %s\n", s.ID)
 	fmt.Printf("Status:  %s\n", colorStatus(s.Status))
+	if s.RuntimeProfile != nil {
+		if s.ServiceMode {
+			fmt.Printf("Profile: %s (service)\n", s.RuntimeProfile.Slug)
+		} else {
+			fmt.Printf("Profile: %s\n", s.RuntimeProfile.Slug)
+		}
+	}
+	if s.ServiceMode {
+		fmt.Printf("Health:  %s\n", serviceHealth(s.Status))
+	}
 	fmt.Println()
 
 	fmt.Println("Resources:")
@@ -168,7 +178,9 @@ func printSandboxDetails(s *api.Sandbox) {
 		fmt.Printf("Last Active: %s\n", formatTime(s.LastActive))
 	}
 
-	if isRunningStatus(s.Status) && s.SSHHost != "" {
+	// Proxy-required routes are still SSH routes — keep showing the command + note.
+	sshUsable := s.SSHHost != "" && (s.Connectivity.SSHDirect || s.Connectivity.SSHProxyRequired)
+	if isRunningStatus(s.Status) && sshUsable {
 		fmt.Println()
 		fmt.Println("Connection:")
 		fmt.Printf("  SSH: ssh %s@%s -p %d\n", s.SSHUser, s.SSHHost, s.SSHPort)
@@ -178,10 +190,17 @@ func printSandboxDetails(s *api.Sandbox) {
 		return
 	}
 
-	if isRunningStatus(s.Status) && s.SSHHost == "" {
+	// No usable SSH: either the endpoint isn't ready yet, or the runtime has no sshd
+	// at all (service runtimes like cortex — the API omits SSH fields for those).
+	// Point at the websocket terminal.
+	if isRunningStatus(s.Status) {
 		fmt.Println()
 		fmt.Println("Connection:")
-		fmt.Println("  SSH endpoint not ready yet.")
+		if s.ServiceMode && s.SSHHost == "" {
+			fmt.Println("  This runtime has no SSH service; use the websocket terminal.")
+		} else {
+			fmt.Println("  SSH endpoint not ready yet.")
+		}
 		fmt.Printf("  Use: cvps connect %s\n", s.ID)
 	}
 }

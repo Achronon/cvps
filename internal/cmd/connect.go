@@ -100,13 +100,30 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get sandbox: %w", err)
 	}
 
+	bootstrapConnect := false
 	if !isRunningStatus(sandbox.Status) {
-		return fmt.Errorf("sandbox is not running (status: %s)", sandbox.Status)
+		// HLM-367: a PROVISIONING service sandbox is connectable for bootstrap — its
+		// readiness gates on model auth that can only be created from INSIDE (e.g.
+		// `codex login --device-auth` for cortex). The websocket terminal rides
+		// pods/exec, which doesn't need a Ready pod.
+		if sandbox.ServiceMode &&
+			isProvisioningStatus(sandbox.Status) &&
+			sandbox.Connectivity.WebsocketTerminal {
+			bootstrapConnect = true
+			fmt.Println("Service sandbox is not ready yet — connecting for bootstrap (set up model auth inside, e.g. 'codex login --device-auth').")
+		} else {
+			return fmt.Errorf("sandbox is not running (status: %s)", sandbox.Status)
+		}
 	}
 
 	method, err := resolveConnectMethod(connectMethod, sandbox)
 	if err != nil {
 		return err
+	}
+	if bootstrapConnect && method != "websocket" {
+		// SSH rides the readiness-gated NodePort and the image may run no sshd at
+		// all; the websocket terminal is the bootstrap path.
+		method = "websocket"
 	}
 
 	fmt.Printf("Connecting to sandbox %s via %s...\n", sandbox.Name, method)
@@ -198,15 +215,23 @@ func listAllSandboxesForConnect(ctx context.Context, client *api.Client) ([]api.
 func resolveConnectMethod(requested string, sandbox *api.Sandbox) (string, error) {
 	method := strings.ToLower(strings.TrimSpace(requested))
 
+	// HLM-367: connectivity.sshDirect is capability-aware server-side — false for
+	// runtimes without an sshd (e.g. cortex, whose PID 1 is the agent loop). An SSH
+	// host existing only means the NodePort exists, not that anything answers.
+	sshUsable := sandbox.SSHHost != "" && sandbox.Connectivity.SSHDirect
+
 	switch method {
 	case "":
-		if sandbox.SSHHost != "" && isSSHAvailable() {
+		if sshUsable && isSSHAvailable() {
 			return "ssh", nil
 		}
 		return "websocket", nil
 	case "ssh":
 		if sandbox.SSHHost == "" {
 			return "", fmt.Errorf("SSH connection is not available for this sandbox")
+		}
+		if !sandbox.Connectivity.SSHDirect {
+			return "", fmt.Errorf("this runtime has no SSH service — use 'cvps connect' (websocket terminal) instead")
 		}
 		return "ssh", nil
 	case "websocket":

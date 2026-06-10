@@ -12,6 +12,15 @@ type SandboxDedicatedIp struct {
 	IPAddress string `json:"ipAddress"`
 }
 
+// SandboxRuntimeProfile is the profile summary embedded in sandbox responses.
+type SandboxRuntimeProfile struct {
+	ID           string   `json:"id"`
+	Slug         string   `json:"slug"`
+	Name         string   `json:"name"`
+	Mode         string   `json:"mode,omitempty"` // INTERACTIVE | SERVICE
+	Capabilities []string `json:"capabilities"`
+}
+
 type Sandbox struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -21,6 +30,11 @@ type Sandbox struct {
 	StorageGB  int    `json:"storageGb"`
 	CreatedAt  string `json:"createdAt"`
 	LastActive string `json:"lastActiveAt,omitempty"`
+
+	// HLM-367: Deployment-backed agent-service sandbox (survives node events, exempt
+	// from the inactivity reaper; readiness usually gates on in-sandbox model auth).
+	ServiceMode    bool                   `json:"serviceMode,omitempty"`
+	RuntimeProfile *SandboxRuntimeProfile `json:"runtimeProfile,omitempty"`
 
 	// Dedicated egress IP, when one is assigned (auto-claimed from the
 	// plan's included IP or explicitly requested with useDedicatedIp).
@@ -44,10 +58,19 @@ type CreateSandboxRequest struct {
 	MemoryGB  int    `json:"memoryGb,omitempty"`
 	StorageGB int    `json:"storageGb,omitempty"`
 
+	// Runtime profile to provision from (resolved from --profile <slug>).
+	RuntimeProfileID string `json:"runtimeProfileId,omitempty"`
+
 	// Explicitly request a dedicated egress IP. The backend requires
 	// AcceptedAup alongside it (and for mail-capable runtimes).
 	UseDedicatedIp bool `json:"useDedicatedIp,omitempty"`
 	AcceptedAup    bool `json:"acceptedAup,omitempty"`
+}
+
+// SandboxLogs is the response of GET /sandboxes/:id/logs.
+type SandboxLogs struct {
+	PodName string `json:"podName"`
+	Logs    string `json:"logs"`
 }
 
 type SandboxList struct {
@@ -92,4 +115,28 @@ func (c *Client) GetSandboxStatus(ctx context.Context, id string) (*Sandbox, err
 
 func (c *Client) DeleteSandbox(ctx context.Context, id string) error {
 	return c.Delete(ctx, "/sandboxes/"+id)
+}
+
+// GetSandboxLogs fetches recent main-container logs (service sandboxes resolve
+// controller-generated pod names server-side).
+func (c *Client) GetSandboxLogs(ctx context.Context, id string, tailLines int) (*SandboxLogs, error) {
+	path := "/sandboxes/" + id + "/logs"
+	if tailLines > 0 {
+		path = fmt.Sprintf("%s?tailLines=%d", path, tailLines)
+	}
+	var logs SandboxLogs
+	if err := c.Get(ctx, path, &logs); err != nil {
+		return nil, err
+	}
+	return &logs, nil
+}
+
+// RestartSandbox bounces the workload (stop + re-provision; service sandboxes
+// scale to zero and re-apply their Deployment).
+func (c *Client) RestartSandbox(ctx context.Context, id string) (*Sandbox, error) {
+	var sandbox Sandbox
+	if err := c.Post(ctx, "/sandboxes/"+id+"/restart", nil, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
 }
