@@ -37,9 +37,9 @@ var secretCmd = &cobra.Command{
 	Short: "Manage tenant secrets",
 	Long: `Manage tenant secrets (encrypted environment variables).
 
-Secrets are attached to sandboxes at create time with 'cvps up --secret <KEY>'
-and injected as environment variables. Values are encrypted at rest and never
-returned by the API after creation.`,
+Secrets are attached to sandboxes at create time and injected as environment
+variables. Values are encrypted at rest and never returned by the API after
+creation.`,
 }
 
 var secretCreateCmd = &cobra.Command{
@@ -153,7 +153,6 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Secret created: %s (%s)\n", secret.Key, secret.ID)
-	fmt.Printf("\nAttach it to a new sandbox with:\n  cvps up --secret %s\n", secret.Key)
 	return nil
 }
 
