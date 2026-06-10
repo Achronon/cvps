@@ -13,6 +13,7 @@ import (
 	"github.com/achronon/cvps/internal/config"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -57,6 +58,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	// Token from stdin (headless; mirrors 'gh auth login --with-token').
 	if loginWithToken {
+		// Reading a TTY would block waiting for typed input - the exact
+		// hang --no-interactive exists to prevent.
+		if noInteractive && term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("--with-token under --no-interactive requires the token on piped stdin (e.g. 'op read op://vault/cvps/token | cvps login --with-token --no-interactive')")
+		}
 		token, err := readTokenFromStdin(os.Stdin)
 		if err != nil {
 			return err

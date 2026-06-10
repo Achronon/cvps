@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -252,10 +253,15 @@ func credentialFromToken(token string) *Credential {
 	return &Credential{Token: token, IsAPIKey: strings.HasPrefix(token, "cvps_")}
 }
 
-// runTokenCommand executes token_command via the shell and returns its
-// trimmed stdout. The token only ever exists in memory.
+// runTokenCommand executes token_command via the platform shell and
+// returns its trimmed stdout. The token only ever exists in memory.
 func runTokenCommand(command string) (string, error) {
-	cmd := exec.Command("sh", "-c", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", command)
+	} else {
+		cmd = exec.Command("/bin/sh", "-c", command)
+	}
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
