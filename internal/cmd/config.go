@@ -23,14 +23,11 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 
-		// Mask sensitive values
+		// Mask sensitive values entirely: even a key suffix is sensitive
+		// data flowing to output (flagged by CodeQL go/clear-text-logging).
 		masked := *cfg
 		if masked.APIKey != "" {
-			if len(masked.APIKey) > 4 {
-				masked.APIKey = "***" + masked.APIKey[len(masked.APIKey)-4:]
-			} else {
-				masked.APIKey = "***"
-			}
+			masked.APIKey = "***"
 		}
 		if masked.AccessToken != "" {
 			masked.AccessToken = "***"
