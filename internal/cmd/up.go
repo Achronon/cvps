@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/achronon/cvps/internal/api"
@@ -14,11 +16,13 @@ import (
 )
 
 var (
-	upName    string
-	upCPU     int
-	upMemory  int
-	upStorage int
-	upDetach  bool
+	upName        string
+	upCPU         int
+	upMemory      int
+	upStorage     int
+	upDetach      bool
+	upDedicatedIP bool
+	upAcceptAup   bool
 )
 
 var upCmd = &cobra.Command{
@@ -35,7 +39,10 @@ available for connections once provisioning completes.`,
   cvps up --name my-project --cpu 4 --memory 8 --storage 50
 
   # Create and return immediately without waiting
-  cvps up --detach`,
+  cvps up --detach
+
+  # Create with a dedicated egress IP (requires accepting the AUP)
+  cvps up --dedicated-ip --accept-aup`,
 	RunE: runUp,
 }
 
@@ -47,6 +54,8 @@ func init() {
 	upCmd.Flags().IntVar(&upMemory, "memory", 0, "memory in GB (default from config)")
 	upCmd.Flags().IntVar(&upStorage, "storage", 0, "storage in GB (default from config)")
 	upCmd.Flags().BoolVarP(&upDetach, "detach", "d", false, "return immediately without waiting")
+	upCmd.Flags().BoolVar(&upDedicatedIP, "dedicated-ip", false, "request a dedicated egress IP (requires --accept-aup)")
+	upCmd.Flags().BoolVar(&upAcceptAup, "accept-aup", false, "accept the dedicated-IP / outbound-email Acceptable Use Policy")
 }
 
 func runUp(cmd *cobra.Command, args []string) error {
@@ -59,14 +68,24 @@ func runUp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not logged in. Run 'cvps login' first")
 	}
 
+	if upDedicatedIP && !upAcceptAup {
+		return fmt.Errorf("--dedicated-ip requires --accept-aup\n\n" +
+			"Dedicated IPs are governed by the Acceptable Use Policy for dedicated\n" +
+			"IPs and sandbox-originated email (no unsolicited bulk mail, no raw SMTP\n" +
+			"egress, no abuse tooling). Review it in the dashboard's Create Sandbox\n" +
+			"dialog, then re-run with --accept-aup to confirm acceptance")
+	}
+
 	client := api.NewClientFromConfig(cfg)
 
 	// Build create request
 	req := &api.CreateSandboxRequest{
-		Name:      upName,
-		CPUCores:  upCPU,
-		MemoryGB:  upMemory,
-		StorageGB: upStorage,
+		Name:           upName,
+		CPUCores:       upCPU,
+		MemoryGB:       upMemory,
+		StorageGB:      upStorage,
+		UseDedicatedIp: upDedicatedIP,
+		AcceptedAup:    upAcceptAup,
 	}
 
 	// Apply defaults
@@ -89,10 +108,16 @@ func runUp(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	sandbox, err := client.CreateSandbox(ctx, req)
 	if err != nil {
+		if hint := createErrorHint(err); hint != "" {
+			return fmt.Errorf("failed to create sandbox: %w\n\n%s", err, hint)
+		}
 		return fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
 	fmt.Printf("Sandbox created: %s\n", sandbox.ID)
+	if ip := dedicatedIPOf(sandbox); ip != "" {
+		fmt.Printf("Dedicated IP: %s\n", ip)
+	}
 
 	if upDetach {
 		fmt.Println("\nSandbox is provisioning. Use 'cvps status' to check progress.")
@@ -115,10 +140,18 @@ func runUp(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to get status: %w", err)
 		}
 
-		switch status.Status {
+		// The backend reports Prisma enum casing (RUNNING/ERROR);
+		// normalize so we never spin past a ready sandbox.
+		switch strings.ToLower(strings.TrimSpace(status.Status)) {
 		case "running":
 			s.Stop()
-			printSandboxReady(status)
+			// The /status endpoint only carries {status,details}; fetch
+			// the full sandbox so resources/SSH/dedicated IP are real.
+			full, fetchErr := client.GetSandbox(ctx, sandbox.ID)
+			if fetchErr != nil {
+				full = sandbox
+			}
+			printSandboxReady(full)
 			saveLocalContext(sandbox.ID, sandbox.Name)
 			return nil
 
@@ -137,6 +170,37 @@ func runUp(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("timeout waiting for sandbox to be ready (waited %s)", timeout)
 }
 
+// createErrorHint maps backend error codes from POST /sandboxes to
+// actionable guidance. Empty string when no hint applies.
+func createErrorHint(err error) string {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
+		return ""
+	}
+	switch apiErr.ErrCode() {
+	case "subscription_required":
+		return "An active subscription is required. Subscribe in the dashboard under\nSettings → Billing, then retry."
+	case "aup_acceptance_required":
+		return "This request needs the Acceptable Use Policy accepted. Re-run with\n--accept-aup (see the dashboard's Create Sandbox dialog for the policy text)."
+	case "dedicated_ip_not_entitled":
+		return "Your subscription has no dedicated-IP entitlement right now — the plan\nincludes none or the subscription is not active. Check Settings → Billing\n(plan status, or the dedicated-IP add-on)."
+	case "dedicated_ip_capacity":
+		return "Every dedicated IP your plan is entitled to is already attached to a\nsandbox, or the shared pool is exhausted. Destroy a sandbox that holds an\nIP, add another IP under Settings → Billing, or create the sandbox\nwithout --dedicated-ip."
+	case "phone_verification_required":
+		return "A verified phone number is required for dedicated-IP sandboxes. Verify\nyour phone in the dashboard under Settings, then retry."
+	case "mfa_required":
+		return "Multi-factor authentication is required for dedicated-IP sandboxes.\nEnable MFA in the dashboard under Settings, then retry."
+	}
+	return ""
+}
+
+func dedicatedIPOf(sandbox *api.Sandbox) string {
+	if sandbox == nil || sandbox.DedicatedIp == nil {
+		return ""
+	}
+	return sandbox.DedicatedIp.IPAddress
+}
+
 func printSandboxReady(sandbox *api.Sandbox) {
 	fmt.Println("\n✓ Sandbox is ready!")
 
@@ -144,6 +208,10 @@ func printSandboxReady(sandbox *api.Sandbox) {
 	fmt.Printf("  CPU:     %d cores\n", sandbox.CPUCores)
 	fmt.Printf("  Memory:  %d GB\n", sandbox.MemoryGB)
 	fmt.Printf("  Storage: %d GB\n", sandbox.StorageGB)
+
+	if ip := dedicatedIPOf(sandbox); ip != "" {
+		fmt.Printf("\nDedicated IP: %s\n", ip)
+	}
 
 	if sandbox.SSHHost != "" {
 		fmt.Println("\nConnection:")
