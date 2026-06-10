@@ -122,6 +122,7 @@ transport is Socket.IO. Use the default SSH method.
 | `cvps sync` | Start file synchronization |
 | `cvps migrate` | Upload local workspace |
 | `cvps config` | Manage configuration |
+| `cvps token` | Mint/manage API tokens for agents (scopes advisory until backend enforcement) |
 
 ## Configuration
 
