@@ -119,6 +119,7 @@ transport is Socket.IO. Use the default SSH method.
 | `cvps down` | Terminate sandbox |
 | `cvps status` | Show sandbox status |
 | `cvps connect` | Open terminal to sandbox |
+| `cvps exec` | Run a command in a sandbox non-interactively (exit code propagated) |
 | `cvps sync` | Start file synchronization |
 | `cvps migrate` | Upload local workspace |
 | `cvps config` | Manage configuration |

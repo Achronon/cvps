@@ -270,10 +270,16 @@ func (t *SocketIOTerminal) Run(stdin io.Reader, stdout io.Writer) error {
 					}
 					decoded, err := base64.StdEncoding.DecodeString(p.Data)
 					if err != nil {
-						_, _ = stdout.Write([]byte(p.Data))
-						continue
+						decoded = []byte(p.Data)
 					}
-					_, _ = stdout.Write(decoded)
+					// Propagate write failures (e.g. EPIPE when the
+					// consumer of a piped 'cvps exec' exits early):
+					// silently dropping them would keep the session and
+					// the remote command running forever.
+					if _, werr := stdout.Write(decoded); werr != nil {
+						errChan <- werr
+						return
+					}
 				case "terminal:error":
 					var p terminalErrorPayload
 					if err := json.Unmarshal(payload, &p); err != nil || strings.TrimSpace(p.Message) == "" {
