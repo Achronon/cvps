@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/achronon/cvps/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -119,6 +120,18 @@ func runFilePut(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+	} else if _, gerr := client.GetSandbox(ctx, sandboxID); gerr != nil {
+		// The ref LOOKED like a sandbox id but none exists - it may be a
+		// sandbox NAME that merely matches the id shape (e.g. sbx-prod);
+		// same fallback as cvps exec.
+		if !api.IsNotFound(gerr) {
+			return fmt.Errorf("failed to get sandbox: %w", gerr)
+		}
+		nameID, nerr := resolveSandboxIDByName(ctx, client, sandboxRef)
+		if nerr != nil {
+			return fmt.Errorf("sandbox not found: %s", sandboxRef)
+		}
+		sandboxID = nameID
 	}
 
 	// No running-status gate on purpose: the files API rides pods/exec,
