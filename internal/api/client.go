@@ -200,6 +200,41 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 	return c.checkResponse(resp)
 }
 
+// Put performs a PUT request
+func (c *Client) Put(ctx context.Context, path string, body interface{}, result interface{}) error {
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to encode request: %w", err)
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.baseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.doAuthenticatedRequest(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err := c.checkResponse(resp); err != nil {
+		return err
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Patch performs a PATCH request
 func (c *Client) Patch(ctx context.Context, path string, body interface{}, result interface{}) error {
 	var bodyReader io.Reader
