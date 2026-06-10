@@ -23,20 +23,27 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 
-		// Mask sensitive values
-		masked := *cfg
-		if masked.APIKey != "" {
-			if len(masked.APIKey) > 4 {
-				masked.APIKey = "***" + masked.APIKey[len(masked.APIKey)-4:]
-			} else {
-				masked.APIKey = "***"
-			}
-		}
-		if masked.AccessToken != "" {
-			masked.AccessToken = "***"
+		// Build a display struct field-by-field instead of copying the
+		// Config: credential values never enter it, only constant
+		// placeholders (CodeQL go/clear-text-logging tracks taint through
+		// whole-struct copies).
+		display := struct {
+			APIKey       string                 `yaml:"api_key,omitempty"`
+			AccessToken  string                 `yaml:"access_token,omitempty"`
+			TokenCommand string                 `yaml:"token_command,omitempty"`
+			APIBaseURL   string                 `yaml:"api_base_url"`
+			Defaults     config.SandboxDefaults `yaml:"defaults"`
+			Sync         config.SyncConfig      `yaml:"sync"`
+		}{
+			APIKey:       redactedPlaceholder(cfg.APIKey != ""),
+			AccessToken:  redactedPlaceholder(cfg.AccessToken != ""),
+			TokenCommand: cfg.TokenCommand,
+			APIBaseURL:   cfg.APIBaseURL,
+			Defaults:     cfg.Defaults,
+			Sync:         cfg.Sync,
 		}
 
-		data, err := yaml.Marshal(masked)
+		data, err := yaml.Marshal(display)
 		if err != nil {
 			return err
 		}
@@ -63,6 +70,8 @@ var configSetCmd = &cobra.Command{
 			cfg.APIKey = value
 		case "api_base_url":
 			cfg.APIBaseURL = value
+		case "token_command":
+			cfg.TokenCommand = value
 		default:
 			return fmt.Errorf("unknown config key: %s", key)
 		}
@@ -94,4 +103,13 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configPathCmd)
+}
+
+// redactedPlaceholder renders presence of a credential without ever
+// touching the credential value itself.
+func redactedPlaceholder(present bool) string {
+	if present {
+		return "***"
+	}
+	return ""
 }

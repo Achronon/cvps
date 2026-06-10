@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -12,10 +13,12 @@ import (
 	"github.com/achronon/cvps/internal/config"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
-	loginAPIKey string
+	loginAPIKey    string
+	loginWithToken bool
 )
 
 var loginCmd = &cobra.Command{
@@ -24,13 +27,27 @@ var loginCmd = &cobra.Command{
 	Long: `Authenticate with the ClaudeVPS API.
 
 By default, opens a browser for OAuth authentication.
-Use --api-key to authenticate with an API key instead.`,
+
+For headless/agent use, pass the token on stdin with --with-token so it
+never appears on the command line:
+
+  op read "op://vault/cvps/token" | cvps login --with-token
+
+Alternatively skip 'login' entirely: set CVPS_API_TOKEN in the
+environment, or set token_command in ~/.cvps/config.yaml (e.g.
+"op read op://vault/cvps/token") to resolve the token on demand without
+storing it on disk.
+
+The --api-key flag remains for back-compat, but prefer --with-token or
+CVPS_API_TOKEN: argv values can leak into shell history and process
+listings.`,
 	RunE: runLogin,
 }
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().StringVar(&loginAPIKey, "api-key", "", "authenticate with API key")
+	loginCmd.Flags().StringVar(&loginAPIKey, "api-key", "", "authenticate with API key (prefer --with-token: argv can leak)")
+	loginCmd.Flags().BoolVar(&loginWithToken, "with-token", false, "read the token from stdin and persist it after validation")
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
@@ -39,9 +56,28 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// API key authentication
+	// Token from stdin (headless; mirrors 'gh auth login --with-token').
+	if loginWithToken {
+		// Reading a TTY would block waiting for typed input - the exact
+		// hang --no-interactive exists to prevent.
+		if noInteractive && term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("--with-token under --no-interactive requires the token on piped stdin (e.g. 'op read op://vault/cvps/token | cvps login --with-token --no-interactive')")
+		}
+		token, err := readTokenFromStdin(os.Stdin)
+		if err != nil {
+			return err
+		}
+		return loginWithCredential(cfg, token, false)
+	}
+
+	// API key authentication: --api-key explicitly means X-API-Key auth
+	// for back-compat, regardless of key prefix.
 	if loginAPIKey != "" {
-		return loginWithAPIKey(cfg, loginAPIKey)
+		return loginWithCredential(cfg, loginAPIKey, true)
+	}
+
+	if noInteractive {
+		return fmt.Errorf("login requires interaction; under --no-interactive use --with-token (token on stdin), or skip login and set CVPS_API_TOKEN / token_command")
 	}
 
 	// Interactive API key entry if --api-key flag is empty but user wants API key auth
@@ -58,28 +94,79 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Print("Enter API key: ")
 		apiKey, _ := reader.ReadString('\n')
 		apiKey = strings.TrimSpace(apiKey)
-		return loginWithAPIKey(cfg, apiKey)
+		return loginWithCredential(cfg, apiKey, true)
 	}
 
 	return loginWithOAuth(cfg)
 }
 
-func loginWithAPIKey(cfg *config.Config, apiKey string) error {
-	client := api.NewClient(cfg.APIBaseURL, apiKey)
+// readTokenFromStdin reads a single token from stdin (first line,
+// whitespace-trimmed) so token material never appears on argv.
+func readTokenFromStdin(stdin io.Reader) (string, error) {
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("failed to read token from stdin: %w", err)
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", fmt.Errorf("no token provided on stdin (pipe it in, e.g. 'op read op://vault/cvps/token | cvps login --with-token')")
+	}
+	return token, nil
+}
 
-	// Validate the API key
-	user, err := client.GetCurrentUser(context.Background())
-	if err != nil {
-		return fmt.Errorf("invalid API key: %w", err)
+func loginWithCredential(cfg *config.Config, token string, forceAPIKey bool) error {
+	if token == "" {
+		return fmt.Errorf("empty token")
 	}
 
-	cfg.APIKey = apiKey
+	// cvps_-prefixed tokens are API keys (X-API-Key); anything else is
+	// sent as a bearer token. The backend accepts cvps_ keys via either
+	// header, so both paths validate against /users/me. forceAPIKey
+	// preserves the legacy --api-key contract for non-prefixed keys.
+	isAPIKey := forceAPIKey || strings.HasPrefix(token, "cvps_")
+
+	var client *api.Client
+	if isAPIKey {
+		client = api.NewClient(cfg.APIBaseURL, token)
+	} else {
+		client = api.NewClientWithToken(cfg.APIBaseURL, token)
+	}
+
+	user, err := client.GetCurrentUser(context.Background())
+	if err != nil {
+		return fmt.Errorf("invalid token: %w", err)
+	}
+
+	// Clear the counterpart credential: ResolveCredential prefers
+	// access_token over api_key, so a stale one would keep winning even
+	// though this login just validated and reported success.
+	if isAPIKey {
+		cfg.APIKey = token
+		cfg.AccessToken = ""
+	} else {
+		cfg.AccessToken = token
+		cfg.APIKey = ""
+	}
+	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
 	fmt.Printf("✓ Logged in as %s (%s)\n", user.Name, user.Email)
 	return nil
+}
+
+// clearTokenCommandOnLogin removes a persisted token_command when the user
+// explicitly logs in with a new credential: token_command outranks stored
+// tokens at resolution time, so leaving it in place would make the login
+// appear to succeed while the old command stays the effective credential.
+func clearTokenCommandOnLogin(cfg *config.Config) {
+	if cfg.TokenCommand == "" {
+		return
+	}
+	cfg.TokenCommand = ""
+	fmt.Fprintln(os.Stderr, "Note: removed the configured token_command so the new login takes effect (it would otherwise keep precedence). Re-set it with 'cvps config set token_command ...' if that was unintended.")
 }
 
 func loginWithOAuth(cfg *config.Config) error {
@@ -113,6 +200,8 @@ func loginWithOAuth(cfg *config.Config) error {
 	}
 
 	cfg.AccessToken = token.AccessToken
+	cfg.APIKey = ""
+	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}

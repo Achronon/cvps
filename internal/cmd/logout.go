@@ -18,12 +18,19 @@ var logoutCmd = &cobra.Command{
 
 		cfg.APIKey = ""
 		cfg.AccessToken = ""
+		// token_command is a credential source too: leaving it set would
+		// keep the CLI silently authenticated after logout.
+		hadTokenCommand := cfg.TokenCommand != ""
+		cfg.TokenCommand = ""
 
 		if err := config.Save(cfg); err != nil {
 			return err
 		}
 
 		fmt.Println("✓ Logged out successfully")
+		if hadTokenCommand {
+			fmt.Println("Note: the configured token_command was removed as part of logout.")
+		}
 		return nil
 	},
 }

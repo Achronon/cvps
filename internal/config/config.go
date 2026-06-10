@@ -3,7 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -14,6 +17,12 @@ type Config struct {
 	APIKey      string `yaml:"api_key" mapstructure:"api_key"`
 	AccessToken string `yaml:"access_token,omitempty" mapstructure:"access_token"`
 
+	// TokenCommand is an optional shell command whose stdout is the API
+	// token (e.g. "op read op://vault/cvps/token"). It is resolved at
+	// client-build time so the token itself never touches disk. Also
+	// settable via the CVPS_TOKEN_COMMAND environment variable.
+	TokenCommand string `yaml:"token_command,omitempty" mapstructure:"token_command"`
+
 	// API settings
 	APIBaseURL string `yaml:"api_base_url" mapstructure:"api_base_url"`
 
@@ -22,6 +31,23 @@ type Config struct {
 
 	// Sync settings
 	Sync SyncConfig `yaml:"sync" mapstructure:"sync"`
+
+	// envToken holds a token sourced from the environment
+	// (CVPS_API_TOKEN / CVPS_TOKEN / CVPS_API_KEY). Unexported on purpose:
+	// it must never be persisted by Save (yaml.Marshal skips unexported
+	// fields), so env-injected credentials cannot leak into config.yaml.
+	envToken string
+
+	// envTokenIsAPIKey records how envToken must be sent: CVPS_API_KEY has
+	// always meant X-API-Key (regardless of prefix, for back-compat),
+	// while CVPS_API_TOKEN/CVPS_TOKEN are classified by the cvps_ prefix.
+	envTokenIsAPIKey bool
+
+	// envTokenCommand holds CVPS_TOKEN_COMMAND. Kept separate from the
+	// persisted TokenCommand field for the same reason as envToken: a
+	// process-scoped env override must never be written to disk by a
+	// later Save (login, logout, config set).
+	envTokenCommand string
 }
 
 type SandboxDefaults struct {
@@ -82,17 +108,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// Return defaults if config doesn't exist
+	// No config file: start from defaults. Environment overrides below
+	// still apply, so a fresh shell with only CVPS_API_TOKEN set is fully
+	// authenticated without ever running 'cvps login'.
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return DefaultConfig(), nil
+		cfg := DefaultConfig()
+		applyEnvOverrides(cfg)
+		return cfg, nil
 	}
 
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
 
-	// Environment variable overrides
-	viper.SetEnvPrefix("CVPS")
-	viper.AutomaticEnv()
+	// NOTE: no viper.AutomaticEnv() here on purpose. Environment handling
+	// is explicit in applyEnvOverrides so env-injected credentials land in
+	// the unexported envToken field and can never be persisted by Save.
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)
@@ -103,15 +133,35 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// Apply env var overrides
-	if apiKey := os.Getenv("CVPS_API_KEY"); apiKey != "" {
-		cfg.APIKey = apiKey
+	applyEnvOverrides(&cfg)
+	return &cfg, nil
+}
+
+// applyEnvOverrides layers environment variables over the stored config.
+// Token material goes into the unexported envToken field so it can never
+// be persisted back to disk by Save.
+func applyEnvOverrides(cfg *Config) {
+	// Highest-precedence first: CVPS_API_TOKEN (HLM-375) > CVPS_TOKEN
+	// (provisioner-injected credential, HLM-372) > CVPS_API_KEY (legacy
+	// alias). CVPS_API_KEY has always been sent as X-API-Key, so it stays
+	// an API key regardless of prefix; the new variables are classified
+	// by the cvps_ prefix.
+	if token := os.Getenv("CVPS_API_TOKEN"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = strings.HasPrefix(token, "cvps_")
+	} else if token := os.Getenv("CVPS_TOKEN"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = strings.HasPrefix(token, "cvps_")
+	} else if token := os.Getenv("CVPS_API_KEY"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = true
+	}
+	if tokenCmd := os.Getenv("CVPS_TOKEN_COMMAND"); tokenCmd != "" {
+		cfg.envTokenCommand = tokenCmd
 	}
 	if apiURL := os.Getenv("CVPS_API_URL"); apiURL != "" {
 		cfg.APIBaseURL = apiURL
 	}
-
-	return &cfg, nil
 }
 
 func Save(cfg *Config) error {
@@ -151,5 +201,75 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) IsAuthenticated() bool {
-	return c.APIKey != "" || c.AccessToken != ""
+	return c.envToken != "" || c.envTokenCommand != "" || c.TokenCommand != "" ||
+		c.APIKey != "" || c.AccessToken != ""
+}
+
+// Credential is a resolved API credential.
+type Credential struct {
+	Token string
+	// IsAPIKey selects the X-API-Key header; otherwise the credential is
+	// sent as an Authorization: Bearer token. The backend accepts
+	// cvps_-prefixed API keys via either header.
+	IsAPIKey bool
+}
+
+// ResolveCredential resolves the effective credential at client-build time.
+// Precedence: environment token (CVPS_API_TOKEN > CVPS_TOKEN >
+// CVPS_API_KEY) > token command (CVPS_TOKEN_COMMAND env, then the stored
+// token_command) > stored access_token > stored api_key. Returns
+// (nil, nil) when no credential is configured.
+func (c *Config) ResolveCredential() (*Credential, error) {
+	if c.envToken != "" {
+		return &Credential{Token: c.envToken, IsAPIKey: c.envTokenIsAPIKey}, nil
+	}
+
+	tokenCommand := c.envTokenCommand
+	if tokenCommand == "" {
+		tokenCommand = c.TokenCommand
+	}
+	if tokenCommand != "" {
+		token, err := runTokenCommand(tokenCommand)
+		if err != nil {
+			return nil, err
+		}
+		return credentialFromToken(token), nil
+	}
+
+	if c.AccessToken != "" {
+		return &Credential{Token: c.AccessToken}, nil
+	}
+	if c.APIKey != "" {
+		return &Credential{Token: c.APIKey, IsAPIKey: true}, nil
+	}
+
+	return nil, nil
+}
+
+// credentialFromToken classifies a dynamically sourced token: cvps_-prefixed
+// values are API keys (X-API-Key, matching the legacy CVPS_API_KEY
+// behavior); anything else is treated as a bearer token (e.g. a JWT).
+func credentialFromToken(token string) *Credential {
+	return &Credential{Token: token, IsAPIKey: strings.HasPrefix(token, "cvps_")}
+}
+
+// runTokenCommand executes token_command via the platform shell and
+// returns its trimmed stdout. The token only ever exists in memory.
+func runTokenCommand(command string) (string, error) {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", command)
+	} else {
+		cmd = exec.Command("/bin/sh", "-c", command)
+	}
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("token_command failed: %w", err)
+	}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", fmt.Errorf("token_command produced no output")
+	}
+	return token, nil
 }

@@ -18,6 +18,7 @@ var (
 	migrateExclude []string
 	migrateDryRun  bool
 	migrateResume  bool
+	migrateYes     bool
 )
 
 var migrateCmd = &cobra.Command{
@@ -46,6 +47,7 @@ func init() {
 	rootCmd.AddCommand(migrateCmd)
 
 	migrateCmd.Flags().StringSliceVar(&migrateExclude, "exclude", nil, "patterns to exclude")
+	migrateCmd.Flags().BoolVarP(&migrateYes, "yes", "y", false, "skip the confirmation prompt")
 	migrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "preview migration without uploading")
 	migrateCmd.Flags().BoolVar(&migrateResume, "resume", false, "resume interrupted migration")
 }
@@ -57,10 +59,13 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.IsAuthenticated() {
-		return fmt.Errorf("not logged in. Run 'cvps login' first")
+		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Get sandbox ID
@@ -124,11 +129,16 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Confirm
-	fmt.Print("Continue with migration? (y/N): ")
-	var confirm string
-	fmt.Scanln(&confirm)
-	if confirm != "y" && confirm != "Y" {
-		return fmt.Errorf("migration cancelled")
+	if !migrateYes {
+		if noInteractive {
+			return fmt.Errorf("refusing to migrate without confirmation under --no-interactive; re-run with --yes")
+		}
+		fmt.Print("Continue with migration? (y/N): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "y" && confirm != "Y" {
+			return fmt.Errorf("migration cancelled")
+		}
 	}
 
 	// Create migrator

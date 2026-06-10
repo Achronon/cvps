@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	cfgFile string
-	verbose bool
+	cfgFile       string
+	verbose       bool
+	noInteractive bool
 )
 
 var rootCmd = &cobra.Command{
@@ -37,6 +38,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.cvps/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&noInteractive, "no-interactive", false, "fail fast instead of prompting (for agents and CI)")
 }
 
 func initConfig() {

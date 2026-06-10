@@ -39,7 +39,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.IsAuthenticated() {
-		return fmt.Errorf("not logged in. Run 'cvps login' first")
+		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
 	sandboxID := ""
@@ -53,7 +53,10 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		sandboxID = id
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("Restarting sandbox %s...\n", sandboxID)
 
 	sandbox, err := client.RestartSandbox(context.Background(), sandboxID)

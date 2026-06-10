@@ -73,12 +73,22 @@ func NewClientWithToken(baseURL, token string, opts ...ClientOption) *Client {
 	return c
 }
 
-// NewClientFromConfig creates a client from config (tries token first, then API key)
-func NewClientFromConfig(cfg *config.Config, opts ...ClientOption) *Client {
-	if cfg.AccessToken != "" {
-		return NewClientWithToken(cfg.APIBaseURL, cfg.AccessToken, opts...)
+// NewClientFromConfig creates a client from config. The credential is
+// resolved at build time with precedence env token > token_command >
+// stored access_token > stored api_key (see config.ResolveCredential), so
+// a token_command's output only ever lives in memory.
+func NewClientFromConfig(cfg *config.Config, opts ...ClientOption) (*Client, error) {
+	cred, err := cfg.ResolveCredential()
+	if err != nil {
+		return nil, err
 	}
-	return NewClient(cfg.APIBaseURL, cfg.APIKey, opts...)
+	if cred == nil {
+		return NewClient(cfg.APIBaseURL, "", opts...), nil
+	}
+	if cred.IsAPIKey {
+		return NewClient(cfg.APIBaseURL, cred.Token, opts...), nil
+	}
+	return NewClientWithToken(cfg.APIBaseURL, cred.Token, opts...), nil
 }
 
 // doAuthenticatedRequest adds authentication headers to a request and executes it

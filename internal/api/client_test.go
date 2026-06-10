@@ -41,7 +41,10 @@ func TestNewClientFromConfig(t *testing.T) {
 			AccessToken: "test-token",
 			APIKey:      "test-api-key",
 		}
-		client := NewClientFromConfig(cfg)
+		client, err := NewClientFromConfig(cfg)
+		if err != nil {
+			t.Fatalf("NewClientFromConfig: %v", err)
+		}
 		if client.token != "test-token" {
 			t.Errorf("Expected token test-token, got %s", client.token)
 		}
@@ -56,7 +59,10 @@ func TestNewClientFromConfig(t *testing.T) {
 			APIBaseURL: "https://api.example.com",
 			APIKey:     "test-api-key",
 		}
-		client := NewClientFromConfig(cfg)
+		client, err := NewClientFromConfig(cfg)
+		if err != nil {
+			t.Fatalf("NewClientFromConfig: %v", err)
+		}
 		if client.apiKey != "test-api-key" {
 			t.Errorf("Expected apiKey test-api-key, got %s", client.apiKey)
 		}

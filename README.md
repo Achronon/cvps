@@ -130,6 +130,8 @@ Config file: `~/.cvps/config.yaml`
 ```yaml
 api_key: cvps_xxx
 api_base_url: https://api.claudevps.com
+# Optional: resolve the token on demand instead of storing it on disk
+# token_command: op read op://vault/cvps/token
 
 defaults:
   cpu_cores: 1
@@ -137,11 +139,37 @@ defaults:
   storage_gb: 5
 ```
 
+## Headless / agent auth
+
+No browser, no TTY, token never on argv:
+
+```bash
+# Option 1: environment variable (fresh shell, no config file needed)
+export CVPS_API_TOKEN=cvps_xxx
+cvps status
+
+# Option 2: persist a token read from stdin (mirrors gh auth login --with-token)
+cvps login --with-token < token.txt
+
+# Option 3: resolve the token on demand (never touches disk)
+cvps config set token_command "op read op://vault/cvps/token"
+```
+
+Credential precedence: env (`CVPS_API_TOKEN` > `CVPS_TOKEN` > `CVPS_API_KEY`)
+> `token_command` > stored config (`access_token` then `api_key`).
+
+Pass `--no-interactive` to make any command that would prompt (login method
+chooser, `down` confirmation, `secret rm` confirmation, `secret create`
+hidden prompt) fail fast with a clear error instead of hanging an agent.
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `CVPS_API_KEY` | API key (overrides config) |
+| `CVPS_API_TOKEN` | API token (highest-precedence credential) |
+| `CVPS_TOKEN` | API token (alias; injected by the provisioner for in-sandbox use) |
+| `CVPS_API_KEY` | API key (legacy alias) |
+| `CVPS_TOKEN_COMMAND` | Shell command whose stdout is the token (overrides `token_command`) |
 | `CVPS_API_URL` | API URL (overrides config) |
 
 ## Development
