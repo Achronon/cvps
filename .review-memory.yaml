@@ -1,0 +1,19 @@
+version: 1
+repo_id: achronon/claudevps-cli
+display_name: "claudevps-cli"
+default_tier: "3"
+issue_providers: [linear]
+issue_key_patterns: ['HLM-\d+', 'INT-\d+']
+tier_1_globs: [.review-memory.yaml, .github/workflows/**, go.mod, go.sum, scripts/**]
+tier_2_globs: [cmd/**, internal/**]
+tier_3_globs: ["**/*.md", "**/*_test.go", docs/**]
+tier_4_globs: ["**/*.md"]
+# CLI review memory is folded into the claudevps namespace — the CLI has no
+# separate Linear project or KB (see CLAUDE.md), and backend-contract
+# learnings are shared across both repos.
+memory_namespace: claudevps
+cross_repo_recall: org-only
+publish_mode: comment
+synthesis_mode: shadow
+synthesis_provider: codex-worker
+synthesis_model_by_tier: {"1": gpt-5.5, "2": gpt-5.5, "3": gpt-5.5, "4": gpt-5.5}
