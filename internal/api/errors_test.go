@@ -35,3 +35,12 @@ func TestAPIError_NoCodeFallsBackToMessage(t *testing.T) {
 		t.Errorf("Error() = %q, want plain message", apiErr.Error())
 	}
 }
+
+func TestAPIError_CodeWithoutMessageHasNoTrailingColon(t *testing.T) {
+	// Account-security 403s (phone_verification_required / mfa_required)
+	// carry no message field.
+	apiErr := APIError{ErrorCode: "phone_verification_required"}
+	if apiErr.Error() != "phone_verification_required" {
+		t.Errorf("Error() = %q, want bare code", apiErr.Error())
+	}
+}

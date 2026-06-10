@@ -509,6 +509,8 @@ func TestCreateErrorHint(t *testing.T) {
 		{"aup_acceptance_required", true},
 		{"dedicated_ip_not_entitled", true},
 		{"dedicated_ip_capacity", true},
+		{"phone_verification_required", true},
+		{"mfa_required", true},
 		{"plan_limit_exceeded", false},
 		{"", false},
 	}

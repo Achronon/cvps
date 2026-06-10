@@ -183,9 +183,13 @@ func createErrorHint(err error) string {
 	case "aup_acceptance_required":
 		return "This request needs the Acceptable Use Policy accepted. Re-run with\n--accept-aup (see the dashboard's Create Sandbox dialog for the policy text)."
 	case "dedicated_ip_not_entitled":
-		return "Your plan has no dedicated-IP entitlement left. Add one under\nSettings → Billing (dedicated-IP add-on), or free one by destroying a\nsandbox that holds an IP."
+		return "Your subscription has no dedicated-IP entitlement right now — the plan\nincludes none or the subscription is not active. Check Settings → Billing\n(plan status, or the dedicated-IP add-on)."
 	case "dedicated_ip_capacity":
-		return "No dedicated IPs are available right now. Retry shortly, or create the\nsandbox without --dedicated-ip."
+		return "Every dedicated IP your plan is entitled to is already attached to a\nsandbox, or the shared pool is exhausted. Destroy a sandbox that holds an\nIP, add another IP under Settings → Billing, or create the sandbox\nwithout --dedicated-ip."
+	case "phone_verification_required":
+		return "A verified phone number is required for dedicated-IP sandboxes. Verify\nyour phone in the dashboard under Settings, then retry."
+	case "mfa_required":
+		return "Multi-factor authentication is required for dedicated-IP sandboxes.\nEnable MFA in the dashboard under Settings, then retry."
 	}
 	return ""
 }

@@ -23,10 +23,17 @@ func (e *APIError) ErrCode() string {
 }
 
 func (e *APIError) Error() string {
-	if code := e.ErrCode(); code != "" {
+	code := e.ErrCode()
+	switch {
+	// Some backend error bodies (e.g. the account-security 403s) carry a
+	// code but no message — don't render a dangling "code: ".
+	case code != "" && e.Message != "":
 		return fmt.Sprintf("%s: %s", code, e.Message)
+	case code != "":
+		return code
+	default:
+		return e.Message
 	}
-	return e.Message
 }
 
 func IsNotFound(err error) bool {
