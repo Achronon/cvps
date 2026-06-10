@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/achronon/cvps/internal/api"
 	"github.com/achronon/cvps/internal/config"
@@ -59,9 +61,15 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		if api.IsNotFound(err) {
 			return fmt.Errorf("sandbox not found: %s", sandboxID)
 		}
-		// The backend only restarts RUNNING sandboxes; a NotReady service can't be
-		// bounced this way yet.
-		return fmt.Errorf("failed to restart sandbox: %w\n\nOnly RUNNING sandboxes can be restarted. For a service that never became\nready, finish its bootstrap first ('cvps connect' then set up model auth),\nor use stop/start from the dashboard", err)
+		// Only the backend's not-running validation earns the bootstrap hint —
+		// auth/5xx/transport failures must not send users down that path.
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) &&
+			apiErr.StatusCode == 400 &&
+			strings.Contains(apiErr.Message, "Cannot restart sandbox with status") {
+			return fmt.Errorf("failed to restart sandbox: %w\n\nOnly RUNNING sandboxes can be restarted. For a service that never became\nready, finish its bootstrap first ('cvps connect' then set up model auth),\nor use stop/start from the dashboard", err)
+		}
+		return fmt.Errorf("failed to restart sandbox: %w", err)
 	}
 
 	fmt.Printf("Sandbox %s is %s. Use 'cvps status --watch' to follow it.\n", sandbox.ID, sandbox.Status)

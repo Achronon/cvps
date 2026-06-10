@@ -315,3 +315,24 @@ func TestRunRestart_NotRunningHint(t *testing.T) {
 		t.Fatalf("expected restart hint, got: %v", err)
 	}
 }
+
+func TestRunRestart_NoHintOnUnrelatedFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{
+			"statusCode": 500,
+			"message":    "Internal server error",
+		})
+	}))
+	defer server.Close()
+
+	setupTestEnv(t, server)
+
+	err := runRestart(nil, []string{"svc-1"})
+	if err == nil {
+		t.Fatal("expected restart to fail")
+	}
+	if strings.Contains(err.Error(), "Only RUNNING sandboxes can be restarted") {
+		t.Errorf("bootstrap hint must not fire for unrelated failures, got: %v", err)
+	}
+}
