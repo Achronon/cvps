@@ -63,6 +63,8 @@ var configSetCmd = &cobra.Command{
 			cfg.APIKey = value
 		case "api_base_url":
 			cfg.APIBaseURL = value
+		case "token_command":
+			cfg.TokenCommand = value
 		default:
 			return fmt.Errorf("unknown config key: %s", key)
 		}

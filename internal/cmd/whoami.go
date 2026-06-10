@@ -19,10 +19,13 @@ var whoamiCmd = &cobra.Command{
 		}
 
 		if !cfg.IsAuthenticated() {
-			return fmt.Errorf("not logged in. Run 'cvps login' first")
+			return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 		}
 
-		client := api.NewClientFromConfig(cfg)
+		client, err := api.NewClientFromConfig(cfg)
+		if err != nil {
+			return err
+		}
 		user, err := client.GetCurrentUser(context.Background())
 		if err != nil {
 			return fmt.Errorf("failed to get user info: %w", err)

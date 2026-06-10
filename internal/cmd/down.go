@@ -57,10 +57,13 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.IsAuthenticated() {
-		return fmt.Errorf("not logged in. Run 'cvps login' first")
+		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Terminate all sandboxes
@@ -97,6 +100,9 @@ func terminateSandbox(ctx context.Context, client *api.Client, sandboxID string)
 
 	// Confirm deletion
 	if !downForce {
+		if noInteractive {
+			return fmt.Errorf("refusing to terminate %s without confirmation under --no-interactive; re-run with --force", sandboxID)
+		}
 		warning := color.New(color.FgYellow, color.Bold)
 		warning.Printf("⚠ Warning: This will permanently delete sandbox '%s' (%s)\n", sandbox.Name, sandboxID)
 		fmt.Println("All data in the sandbox will be lost.")
@@ -158,6 +164,9 @@ func terminateAllSandboxes(ctx context.Context, client *api.Client) error {
 
 	// Confirm
 	if !downForce {
+		if noInteractive {
+			return fmt.Errorf("refusing to terminate all sandboxes without confirmation under --no-interactive; re-run with --force")
+		}
 		warning := color.New(color.FgRed, color.Bold)
 		warning.Printf("⚠ DANGER: This will permanently delete ALL %d sandboxes!\n\n", len(list.Data))
 

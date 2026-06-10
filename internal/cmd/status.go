@@ -58,10 +58,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.IsAuthenticated() {
-		return fmt.Errorf("not logged in. Run 'cvps login' first")
+		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// List all sandboxes

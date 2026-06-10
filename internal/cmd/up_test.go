@@ -34,7 +34,7 @@ func TestRunUp_NotAuthenticated(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for unauthenticated request")
 	}
-	if err.Error() != "not logged in. Run 'cvps login' first" {
+	if err.Error() != "not logged in. Run 'cvps login' or set CVPS_API_TOKEN" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }

@@ -70,7 +70,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.IsAuthenticated() {
-		return fmt.Errorf("not logged in. Run 'cvps login' first")
+		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
 	// Check Mutagen is installed
@@ -78,7 +78,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("mutagen is not installed. Install it with: brew install mutagen-io/mutagen/mutagen")
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Get sandbox ID

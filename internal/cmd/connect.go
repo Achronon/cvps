@@ -70,7 +70,10 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	sandboxID, err := resolveSandboxIDForConnect(ctx, client, args, connectName)
@@ -253,6 +256,10 @@ func looksLikeSandboxID(value string) bool {
 func ensureConnectedAuth(cfg *config.Config) (*config.Config, error) {
 	if cfg.IsAuthenticated() {
 		return cfg, nil
+	}
+
+	if noInteractive {
+		return nil, fmt.Errorf("not logged in and --no-interactive is set; set CVPS_API_TOKEN (or token_command) or run 'cvps login' interactively")
 	}
 
 	fmt.Println("Not logged in. Starting browser authentication...")

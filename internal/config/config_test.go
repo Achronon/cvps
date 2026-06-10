@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -151,19 +152,27 @@ func TestEnvironmentVariableOverrides(t *testing.T) {
 	}
 
 	// Set environment variables
-	os.Setenv("CVPS_API_KEY", "env-override-key")
-	os.Setenv("CVPS_API_URL", "https://env-override.com")
-	defer os.Unsetenv("CVPS_API_KEY")
-	defer os.Unsetenv("CVPS_API_URL")
+	t.Setenv("CVPS_API_KEY", "cvps_env_override_key")
+	t.Setenv("CVPS_API_URL", "https://env-override.com")
 
-	// Load config - should use env vars
+	// Load config - env credential must win over the stored one
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if loaded.APIKey != "env-override-key" {
-		t.Errorf("expected APIKey from env to be env-override-key, got %s", loaded.APIKey)
+	cred, err := loaded.ResolveCredential()
+	if err != nil {
+		t.Fatalf("ResolveCredential() failed: %v", err)
+	}
+	if cred == nil || cred.Token != "cvps_env_override_key" {
+		t.Errorf("expected env credential cvps_env_override_key, got %+v", cred)
+	}
+
+	// The stored field must stay untouched so Save can never persist the
+	// env-injected credential.
+	if loaded.APIKey != "config-file-key" {
+		t.Errorf("expected stored APIKey to remain config-file-key, got %s", loaded.APIKey)
 	}
 
 	if loaded.APIBaseURL != "https://env-override.com" {
@@ -243,5 +252,246 @@ func TestIsAuthenticated(t *testing.T) {
 				t.Errorf("IsAuthenticated() = %v, expected %v", result, tt.expect)
 			}
 		})
+	}
+}
+
+// --- HLM-382: headless auth ---
+
+func TestLoadFreshShellEnvTokenOnly(t *testing.T) {
+	// No config file at all: env-only auth must still work (the HLM-375
+	// acceptance scenario; previously Load early-returned before env
+	// overrides were applied).
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CVPS_API_TOKEN", "cvps_fresh_shell_token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !cfg.IsAuthenticated() {
+		t.Fatal("expected IsAuthenticated() with only CVPS_API_TOKEN set")
+	}
+
+	cred, err := cfg.ResolveCredential()
+	if err != nil {
+		t.Fatalf("ResolveCredential() failed: %v", err)
+	}
+	if cred == nil || cred.Token != "cvps_fresh_shell_token" {
+		t.Fatalf("expected env token, got %+v", cred)
+	}
+	if !cred.IsAPIKey {
+		t.Error("cvps_-prefixed token should resolve as an API key")
+	}
+}
+
+func TestEnvTokenPrecedence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{
+			name: "CVPS_API_TOKEN wins over CVPS_TOKEN and CVPS_API_KEY",
+			env: map[string]string{
+				"CVPS_API_TOKEN": "tok-api-token",
+				"CVPS_TOKEN":     "tok-token",
+				"CVPS_API_KEY":   "tok-api-key",
+			},
+			want: "tok-api-token",
+		},
+		{
+			name: "CVPS_TOKEN wins over CVPS_API_KEY",
+			env: map[string]string{
+				"CVPS_TOKEN":   "tok-token",
+				"CVPS_API_KEY": "tok-api-key",
+			},
+			want: "tok-token",
+		},
+		{
+			name: "CVPS_API_KEY alone still works",
+			env:  map[string]string{"CVPS_API_KEY": "tok-api-key"},
+			want: "tok-api-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, name := range []string{"CVPS_API_TOKEN", "CVPS_TOKEN", "CVPS_API_KEY"} {
+				t.Setenv(name, "")
+				os.Unsetenv(name)
+			}
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			cred, err := cfg.ResolveCredential()
+			if err != nil {
+				t.Fatalf("ResolveCredential() failed: %v", err)
+			}
+			if cred == nil || cred.Token != tt.want {
+				t.Errorf("expected token %q, got %+v", tt.want, cred)
+			}
+		})
+	}
+}
+
+func TestTokenCommand(t *testing.T) {
+	t.Run("resolves trimmed stdout", func(t *testing.T) {
+		cfg := &Config{TokenCommand: "echo '  cvps_from_command  '"}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "cvps_from_command" {
+			t.Fatalf("expected trimmed token, got %+v", cred)
+		}
+		if !cred.IsAPIKey {
+			t.Error("cvps_-prefixed token should resolve as an API key")
+		}
+	})
+
+	t.Run("non-cvps token resolves as bearer", func(t *testing.T) {
+		cfg := &Config{TokenCommand: "echo some.jwt.token"}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.IsAPIKey {
+			t.Errorf("expected bearer credential, got %+v", cred)
+		}
+	})
+
+	t.Run("empty output is an error", func(t *testing.T) {
+		cfg := &Config{TokenCommand: "true"}
+		if _, err := cfg.ResolveCredential(); err == nil {
+			t.Fatal("expected error for empty token_command output")
+		}
+	})
+
+	t.Run("command failure is an error", func(t *testing.T) {
+		cfg := &Config{TokenCommand: "exit 3"}
+		if _, err := cfg.ResolveCredential(); err == nil {
+			t.Fatal("expected error for failing token_command")
+		}
+	})
+
+	t.Run("env token beats token_command", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("CVPS_API_TOKEN", "tok-env")
+		t.Setenv("CVPS_TOKEN_COMMAND", "echo tok-command")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "tok-env" {
+			t.Errorf("expected env token to win, got %+v", cred)
+		}
+	})
+
+	t.Run("CVPS_TOKEN_COMMAND env sets TokenCommand", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("CVPS_TOKEN_COMMAND", "echo tok-from-env-command")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() failed: %v", err)
+		}
+		if !cfg.IsAuthenticated() {
+			t.Fatal("expected IsAuthenticated() with CVPS_TOKEN_COMMAND set")
+		}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "tok-from-env-command" {
+			t.Errorf("expected token from command, got %+v", cred)
+		}
+	})
+
+	t.Run("token_command beats stored config", func(t *testing.T) {
+		cfg := &Config{
+			TokenCommand: "echo tok-command",
+			AccessToken:  "stored-access-token",
+			APIKey:       "stored-api-key",
+		}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "tok-command" {
+			t.Errorf("expected token_command to win over stored config, got %+v", cred)
+		}
+	})
+}
+
+func TestResolveCredentialStoredConfig(t *testing.T) {
+	t.Run("access token preferred over api key", func(t *testing.T) {
+		cfg := &Config{AccessToken: "stored-token", APIKey: "stored-key"}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "stored-token" || cred.IsAPIKey {
+			t.Errorf("expected stored access token as bearer, got %+v", cred)
+		}
+	})
+
+	t.Run("api key fallback uses X-API-Key", func(t *testing.T) {
+		cfg := &Config{APIKey: "stored-key"}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "stored-key" || !cred.IsAPIKey {
+			t.Errorf("expected stored API key credential, got %+v", cred)
+		}
+	})
+
+	t.Run("no credential", func(t *testing.T) {
+		cfg := &Config{}
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred != nil {
+			t.Errorf("expected nil credential, got %+v", cred)
+		}
+	})
+}
+
+func TestSaveNeverPersistsEnvToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CVPS_API_TOKEN", "cvps_env_secret_token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	path, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() failed: %v", err)
+	}
+	if strings.Contains(string(data), "cvps_env_secret_token") {
+		t.Fatal("env-injected token leaked into the persisted config file")
 	}
 }

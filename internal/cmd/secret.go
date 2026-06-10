@@ -103,9 +103,9 @@ func newAuthenticatedClient() (*api.Client, error) {
 		return nil, err
 	}
 	if !cfg.IsAuthenticated() {
-		return nil, fmt.Errorf("not logged in. Run 'cvps login' first")
+		return nil, fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
-	return api.NewClientFromConfig(cfg), nil
+	return api.NewClientFromConfig(cfg)
 }
 
 func runSecretCreate(cmd *cobra.Command, args []string) error {
@@ -176,6 +176,10 @@ func readSecretValue(valueFile string, stdin *os.File, key string) (string, erro
 			return "", fmt.Errorf("failed to read secret value from stdin: %w", err)
 		}
 		return trimSingleTrailingNewline(string(data)), nil
+	}
+
+	if noInteractive {
+		return "", fmt.Errorf("reading the value for %s would prompt; under --no-interactive pass --value-file or pipe the value on stdin", key)
 	}
 
 	// Interactive: hidden prompt, no echo.
@@ -261,7 +265,7 @@ func runSecretRm(cmd *cobra.Command, args []string) error {
 	}
 
 	if !secretRmForce {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if noInteractive || !term.IsTerminal(int(os.Stdin.Fd())) {
 			return fmt.Errorf("refusing to delete %s without confirmation on non-interactive stdin; re-run with --force", display)
 		}
 		fmt.Printf("Permanently delete secret %s? This detaches it from any sandboxes. [y/N]: ", display)
