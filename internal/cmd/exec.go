@@ -101,10 +101,13 @@ func newExecMarkers() (*execMarkers, error) {
 // buildRemoteCommand wraps the user command for marker scraping. The
 // marker literals are SPLIT across two printf arguments in the typed
 // line, so the PTY echo of this command line can never contain a full
-// marker (only the printf OUTPUT does).
+// marker (only the printf OUTPUT does). The user command's stdin is
+// redirected from /dev/null: it would otherwise stay attached to the PTY,
+// and a command that reads stdin (cat, grep with no files, a prompt)
+// would hang forever since cvps exec sends no further input.
 func buildRemoteCommand(m *execMarkers, userCmd string) string {
 	return fmt.Sprintf(
-		"stty -echo 2>/dev/null; printf '%%s%%s\\n' '__CVPS_EXEC_BEGIN_' '%s__'; %s; __cvps_rc=$?; printf '\\n%%s%%s%%d__\\n' '__CVPS_EXEC_RC_' '%s_' \"$__cvps_rc\"; exit \"$__cvps_rc\"\n",
+		"stty -echo 2>/dev/null; printf '%%s%%s\\n' '__CVPS_EXEC_BEGIN_' '%s__'; { %s; } </dev/null; __cvps_rc=$?; printf '\\n%%s%%s%%d__\\n' '__CVPS_EXEC_RC_' '%s_' \"$__cvps_rc\"; exit \"$__cvps_rc\"\n",
 		m.nonce, userCmd, m.nonce,
 	)
 }

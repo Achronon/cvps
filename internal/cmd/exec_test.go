@@ -119,6 +119,9 @@ func TestBuildRemoteCommandNeverContainsMarkerLiterals(t *testing.T) {
 	if !strings.HasSuffix(line, "\n") {
 		t.Error("remote command must end with a newline to execute")
 	}
+	if !strings.Contains(line, "</dev/null") {
+		t.Error("user command stdin must be redirected from /dev/null so stdin-reading commands cannot hang")
+	}
 }
 
 // feedFilter writes the stream to the filter in the given chunk size.
