@@ -61,12 +61,13 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return loginWithCredential(cfg, token)
+		return loginWithCredential(cfg, token, false)
 	}
 
-	// API key authentication
+	// API key authentication: --api-key explicitly means X-API-Key auth
+	// for back-compat, regardless of key prefix.
 	if loginAPIKey != "" {
-		return loginWithCredential(cfg, loginAPIKey)
+		return loginWithCredential(cfg, loginAPIKey, true)
 	}
 
 	if noInteractive {
@@ -87,7 +88,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Print("Enter API key: ")
 		apiKey, _ := reader.ReadString('\n')
 		apiKey = strings.TrimSpace(apiKey)
-		return loginWithCredential(cfg, apiKey)
+		return loginWithCredential(cfg, apiKey, true)
 	}
 
 	return loginWithOAuth(cfg)
@@ -108,15 +109,16 @@ func readTokenFromStdin(stdin io.Reader) (string, error) {
 	return token, nil
 }
 
-func loginWithCredential(cfg *config.Config, token string) error {
+func loginWithCredential(cfg *config.Config, token string, forceAPIKey bool) error {
 	if token == "" {
 		return fmt.Errorf("empty token")
 	}
 
 	// cvps_-prefixed tokens are API keys (X-API-Key); anything else is
 	// sent as a bearer token. The backend accepts cvps_ keys via either
-	// header, so both paths validate against /users/me.
-	isAPIKey := strings.HasPrefix(token, "cvps_")
+	// header, so both paths validate against /users/me. forceAPIKey
+	// preserves the legacy --api-key contract for non-prefixed keys.
+	isAPIKey := forceAPIKey || strings.HasPrefix(token, "cvps_")
 
 	var client *api.Client
 	if isAPIKey {
@@ -130,10 +132,15 @@ func loginWithCredential(cfg *config.Config, token string) error {
 		return fmt.Errorf("invalid token: %w", err)
 	}
 
+	// Clear the counterpart credential: ResolveCredential prefers
+	// access_token over api_key, so a stale one would keep winning even
+	// though this login just validated and reported success.
 	if isAPIKey {
 		cfg.APIKey = token
+		cfg.AccessToken = ""
 	} else {
 		cfg.AccessToken = token
+		cfg.APIKey = ""
 	}
 	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
@@ -187,6 +194,7 @@ func loginWithOAuth(cfg *config.Config) error {
 	}
 
 	cfg.AccessToken = token.AccessToken
+	cfg.APIKey = ""
 	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)

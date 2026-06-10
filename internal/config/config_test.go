@@ -342,6 +342,50 @@ func TestEnvTokenPrecedence(t *testing.T) {
 	}
 }
 
+func TestEnvTokenHeaderClassification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	tests := []struct {
+		name         string
+		envVar       string
+		token        string
+		wantIsAPIKey bool
+	}{
+		// CVPS_API_KEY has always meant X-API-Key, regardless of prefix.
+		{name: "legacy CVPS_API_KEY without prefix stays an API key", envVar: "CVPS_API_KEY", token: "legacy-key-no-prefix", wantIsAPIKey: true},
+		{name: "CVPS_API_KEY with prefix is an API key", envVar: "CVPS_API_KEY", token: "cvps_abc", wantIsAPIKey: true},
+		// The new variables are classified by prefix.
+		{name: "CVPS_API_TOKEN with cvps_ prefix is an API key", envVar: "CVPS_API_TOKEN", token: "cvps_abc", wantIsAPIKey: true},
+		{name: "CVPS_API_TOKEN without prefix is a bearer token", envVar: "CVPS_API_TOKEN", token: "some.jwt.token", wantIsAPIKey: false},
+		{name: "CVPS_TOKEN without prefix is a bearer token", envVar: "CVPS_TOKEN", token: "some.jwt.token", wantIsAPIKey: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, name := range []string{"CVPS_API_TOKEN", "CVPS_TOKEN", "CVPS_API_KEY"} {
+				t.Setenv(name, "")
+				os.Unsetenv(name)
+			}
+			t.Setenv(tt.envVar, tt.token)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			cred, err := cfg.ResolveCredential()
+			if err != nil {
+				t.Fatalf("ResolveCredential() failed: %v", err)
+			}
+			if cred == nil || cred.Token != tt.token {
+				t.Fatalf("expected token %q, got %+v", tt.token, cred)
+			}
+			if cred.IsAPIKey != tt.wantIsAPIKey {
+				t.Errorf("IsAPIKey: got %v, want %v", cred.IsAPIKey, tt.wantIsAPIKey)
+			}
+		})
+	}
+}
+
 func TestTokenCommand(t *testing.T) {
 	t.Run("resolves trimmed stdout", func(t *testing.T) {
 		cfg := &Config{TokenCommand: "echo '  cvps_from_command  '"}

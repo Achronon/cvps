@@ -37,6 +37,11 @@ type Config struct {
 	// fields), so env-injected credentials cannot leak into config.yaml.
 	envToken string
 
+	// envTokenIsAPIKey records how envToken must be sent: CVPS_API_KEY has
+	// always meant X-API-Key (regardless of prefix, for back-compat),
+	// while CVPS_API_TOKEN/CVPS_TOKEN are classified by the cvps_ prefix.
+	envTokenIsAPIKey bool
+
 	// envTokenCommand holds CVPS_TOKEN_COMMAND. Kept separate from the
 	// persisted TokenCommand field for the same reason as envToken: a
 	// process-scoped env override must never be written to disk by a
@@ -137,12 +142,18 @@ func Load() (*Config, error) {
 func applyEnvOverrides(cfg *Config) {
 	// Highest-precedence first: CVPS_API_TOKEN (HLM-375) > CVPS_TOKEN
 	// (provisioner-injected credential, HLM-372) > CVPS_API_KEY (legacy
-	// alias).
-	for _, name := range []string{"CVPS_API_TOKEN", "CVPS_TOKEN", "CVPS_API_KEY"} {
-		if token := os.Getenv(name); token != "" {
-			cfg.envToken = token
-			break
-		}
+	// alias). CVPS_API_KEY has always been sent as X-API-Key, so it stays
+	// an API key regardless of prefix; the new variables are classified
+	// by the cvps_ prefix.
+	if token := os.Getenv("CVPS_API_TOKEN"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = strings.HasPrefix(token, "cvps_")
+	} else if token := os.Getenv("CVPS_TOKEN"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = strings.HasPrefix(token, "cvps_")
+	} else if token := os.Getenv("CVPS_API_KEY"); token != "" {
+		cfg.envToken = token
+		cfg.envTokenIsAPIKey = true
 	}
 	if tokenCmd := os.Getenv("CVPS_TOKEN_COMMAND"); tokenCmd != "" {
 		cfg.envTokenCommand = tokenCmd
@@ -209,7 +220,7 @@ type Credential struct {
 // (nil, nil) when no credential is configured.
 func (c *Config) ResolveCredential() (*Credential, error) {
 	if c.envToken != "" {
-		return credentialFromToken(c.envToken), nil
+		return &Credential{Token: c.envToken, IsAPIKey: c.envTokenIsAPIKey}, nil
 	}
 
 	tokenCommand := c.envTokenCommand
