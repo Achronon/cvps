@@ -261,3 +261,63 @@ func TestMarkerFilterIgnoresEverythingBeforeBegin(t *testing.T) {
 		t.Errorf("output: got %q, want %q", got, "real\n")
 	}
 }
+
+func TestMarkerFilterStreamsPromptTailsImmediately(t *testing.T) {
+	m := &execMarkers{
+		nonce: "deadbeef",
+		begin: "__CVPS_EXEC_BEGIN_deadbeef__",
+		rc:    "__CVPS_EXEC_RC_deadbeef_",
+	}
+
+	var out bytes.Buffer
+	f := newMarkerFilter(&out, m)
+
+	// A long-running command prints a prompt WITHOUT trailing newline and
+	// then waits (e.g. device-auth printing a code). The prompt must be
+	// fully visible immediately, not held back waiting for the rc marker.
+	feedFilter(t, f, "__CVPS_EXEC_BEGIN_deadbeef__\r\nEnter code ABCD-1234 at https://example.com: ", 9)
+	if got := out.String(); got != "Enter code ABCD-1234 at https://example.com: " {
+		t.Errorf("prompt tail must be streamed immediately, got %q", got)
+	}
+
+	// A partial rc marker (with its synthetic newline) must stay buffered...
+	feedFilter(t, f, "\r\n__CVPS_EXEC_RC_dead", 5)
+	if got := out.String(); got != "Enter code ABCD-1234 at https://example.com: " {
+		t.Errorf("partial rc marker must stay buffered, got %q", got)
+	}
+
+	// ...and complete into the exit code without emitting marker bytes.
+	feedFilter(t, f, "beef_0__\r\n", 3)
+	rc, ok := f.ExitCode()
+	if !ok || rc != 0 {
+		t.Errorf("exit code: got (%d, %v), want (0, true)", rc, ok)
+	}
+	if got := out.String(); got != "Enter code ABCD-1234 at https://example.com: " {
+		t.Errorf("marker bytes leaked into output: %q", got)
+	}
+}
+
+func TestMarkerFilterFalseMarkerPrefixFlushesWhenBroken(t *testing.T) {
+	m := &execMarkers{
+		nonce: "deadbeef",
+		begin: "__CVPS_EXEC_BEGIN_deadbeef__",
+		rc:    "__CVPS_EXEC_RC_deadbeef_",
+	}
+
+	var out bytes.Buffer
+	f := newMarkerFilter(&out, m)
+
+	// Output that starts like the rc marker but diverges must be flushed
+	// once the divergence is visible.
+	feedFilter(t, f, "__CVPS_EXEC_BEGIN_deadbeef__\r\nx\n__CVPS_EXEC_RX", 7)
+	feedFilter(t, f, " not a marker\n", 100)
+	feedFilter(t, f, "\n__CVPS_EXEC_RC_deadbeef_3__\n", 100)
+
+	rc, ok := f.ExitCode()
+	if !ok || rc != 3 {
+		t.Errorf("exit code: got (%d, %v), want (3, true)", rc, ok)
+	}
+	if got, want := out.String(), "x\n__CVPS_EXEC_RX not a marker\n"; got != want {
+		t.Errorf("output: got %q, want %q", got, want)
+	}
+}

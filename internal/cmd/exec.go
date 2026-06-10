@@ -213,9 +213,14 @@ func (f *markerFilter) Write(p []byte) (int, error) {
 		rest := f.buf[idx+len(f.rcPfx):]
 		end := bytes.Index(rest, []byte("__"))
 		if end < 0 {
-			// Exit code digits not fully arrived yet; flush what we
-			// safely can and keep the rest buffered.
-			return f.flushKeepingTail(p)
+			// Marker started but the exit-code digits have not fully
+			// arrived: flush everything before the (synthetic) newline
+			// preceding the marker, keep the marker bytes buffered.
+			keepFrom := idx
+			if keepFrom > 0 && f.buf[keepFrom-1] == '\n' {
+				keepFrom--
+			}
+			return f.flushUpTo(p, keepFrom)
 		}
 		if rc, err := strconv.Atoi(string(rest[:end])); err == nil {
 			f.rc = rc
@@ -233,21 +238,40 @@ func (f *markerFilter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 
-	return f.flushKeepingTail(p)
+	// No marker yet: stream everything except the longest buffer suffix
+	// that could still grow into "\n"+rcPfx. Anything else (e.g. an
+	// interactive prompt tail without a trailing newline) is flushed
+	// immediately - cvps exec advertises streamed output and a
+	// long-waiting command's last line must not stay hidden.
+	return f.flushUpTo(p, len(f.buf)-f.markerOverlap())
 }
 
-// flushKeepingTail emits buffered output except a tail large enough to
-// hold a split rc marker (plus its synthetic preceding newline).
-func (f *markerFilter) flushKeepingTail(p []byte) (int, error) {
-	keep := len(f.rcPfx) + 24 // marker prefix + room for "\n", digits, "__"
-	if len(f.buf) <= keep {
+// markerOverlap returns the length of the longest suffix of the buffer
+// that is a prefix of "\n"+rcPfx (i.e. bytes that may still turn out to
+// be a split rc marker and must stay buffered).
+func (f *markerFilter) markerOverlap() int {
+	pattern := append([]byte("\n"), f.rcPfx...)
+	max := len(pattern) - 1
+	if max > len(f.buf) {
+		max = len(f.buf)
+	}
+	for k := max; k > 0; k-- {
+		if bytes.Equal(f.buf[len(f.buf)-k:], pattern[:k]) {
+			return k
+		}
+	}
+	return 0
+}
+
+// flushUpTo emits buf[:n] and keeps the rest buffered.
+func (f *markerFilter) flushUpTo(p []byte, n int) (int, error) {
+	if n <= 0 {
 		return len(p), nil
 	}
-	emit := f.buf[:len(f.buf)-keep]
-	if _, err := f.out.Write(emit); err != nil {
+	if _, err := f.out.Write(f.buf[:n]); err != nil {
 		return len(p), err
 	}
-	f.buf = append(f.buf[:0:0], f.buf[len(f.buf)-keep:]...)
+	f.buf = append(f.buf[:0:0], f.buf[n:]...)
 	return len(p), nil
 }
 
@@ -278,6 +302,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	sandbox, err := client.GetSandbox(ctx, sandboxID)
+	if err != nil && api.IsNotFound(err) && sandboxID == sandboxRef {
+		// The ref LOOKED like a sandbox id but none exists - it may be a
+		// sandbox NAME that merely matches the id shape (e.g. sbx-prod).
+		if nameID, nameErr := resolveSandboxIDByName(ctx, client, sandboxRef); nameErr == nil {
+			sandboxID = nameID
+			sandbox, err = client.GetSandbox(ctx, sandboxID)
+		}
+	}
 	if err != nil {
 		if api.IsNotFound(err) {
 			return fmt.Errorf("sandbox not found: %s", sandboxRef)
