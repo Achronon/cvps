@@ -86,6 +86,19 @@ func runFilePut(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Stat before buffering: an oversized file (or a device/FIFO that
+	// never reaches EOF) must be rejected without reading it into memory.
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", localPath)
+	}
+	if info.Size() > maxFilePutSize {
+		return fmt.Errorf("file is %d bytes; cvps file put caps uploads at %d bytes", info.Size(), maxFilePutSize)
+	}
+
 	content, err := os.ReadFile(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", localPath, err)
