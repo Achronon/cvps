@@ -61,6 +61,14 @@ type CreateSandboxRequest struct {
 	// Runtime profile to provision from (resolved from --profile <slug>).
 	RuntimeProfileID string `json:"runtimeProfileId,omitempty"`
 
+	// TenantSecret ids to inject as environment variables (resolved from
+	// repeatable --secret <KEY> flags; attach is create-time only).
+	SecretIDs []string `json:"secretIds,omitempty"`
+
+	// Per-sandbox env overrides (repeatable --env KEY=VALUE flags). Keys
+	// must be in the runtime profile's tenantEnvKeys allowlist (HLM-368).
+	EnvOverrides map[string]string `json:"envOverrides,omitempty"`
+
 	// Explicitly request a dedicated egress IP. The backend requires
 	// AcceptedAup alongside it (and for mail-capable runtimes).
 	UseDedicatedIp bool `json:"useDedicatedIp,omitempty"`
