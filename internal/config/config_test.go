@@ -418,6 +418,38 @@ func TestTokenCommand(t *testing.T) {
 		if cred == nil || cred.Token != "tok-from-env-command" {
 			t.Errorf("expected token from command, got %+v", cred)
 		}
+		// The env override must stay out of the persistable field so a
+		// later Save cannot write it to disk.
+		if cfg.TokenCommand != "" {
+			t.Errorf("CVPS_TOKEN_COMMAND must not populate the persisted TokenCommand field, got %q", cfg.TokenCommand)
+		}
+		if err := Save(cfg); err != nil {
+			t.Fatalf("Save() failed: %v", err)
+		}
+		path, err := ConfigPath()
+		if err != nil {
+			t.Fatalf("ConfigPath() failed: %v", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile() failed: %v", err)
+		}
+		if strings.Contains(string(data), "tok-from-env-command") || strings.Contains(string(data), "token_command") {
+			t.Fatal("CVPS_TOKEN_COMMAND leaked into the persisted config file")
+		}
+	})
+
+	t.Run("env CVPS_TOKEN_COMMAND beats stored token_command", func(t *testing.T) {
+		t.Setenv("CVPS_TOKEN_COMMAND", "echo tok-env-cmd")
+		cfg := &Config{TokenCommand: "echo tok-stored-cmd"}
+		applyEnvOverrides(cfg)
+		cred, err := cfg.ResolveCredential()
+		if err != nil {
+			t.Fatalf("ResolveCredential() failed: %v", err)
+		}
+		if cred == nil || cred.Token != "tok-env-cmd" {
+			t.Errorf("expected env token command to win, got %+v", cred)
+		}
 	})
 
 	t.Run("token_command beats stored config", func(t *testing.T) {

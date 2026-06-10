@@ -135,12 +135,25 @@ func loginWithCredential(cfg *config.Config, token string) error {
 	} else {
 		cfg.AccessToken = token
 	}
+	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
 	fmt.Printf("✓ Logged in as %s (%s)\n", user.Name, user.Email)
 	return nil
+}
+
+// clearTokenCommandOnLogin removes a persisted token_command when the user
+// explicitly logs in with a new credential: token_command outranks stored
+// tokens at resolution time, so leaving it in place would make the login
+// appear to succeed while the old command stays the effective credential.
+func clearTokenCommandOnLogin(cfg *config.Config) {
+	if cfg.TokenCommand == "" {
+		return
+	}
+	cfg.TokenCommand = ""
+	fmt.Fprintln(os.Stderr, "Note: removed the configured token_command so the new login takes effect (it would otherwise keep precedence). Re-set it with 'cvps config set token_command ...' if that was unintended.")
 }
 
 func loginWithOAuth(cfg *config.Config) error {
@@ -174,6 +187,7 @@ func loginWithOAuth(cfg *config.Config) error {
 	}
 
 	cfg.AccessToken = token.AccessToken
+	clearTokenCommandOnLogin(cfg)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}

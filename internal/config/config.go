@@ -36,6 +36,12 @@ type Config struct {
 	// it must never be persisted by Save (yaml.Marshal skips unexported
 	// fields), so env-injected credentials cannot leak into config.yaml.
 	envToken string
+
+	// envTokenCommand holds CVPS_TOKEN_COMMAND. Kept separate from the
+	// persisted TokenCommand field for the same reason as envToken: a
+	// process-scoped env override must never be written to disk by a
+	// later Save (login, logout, config set).
+	envTokenCommand string
 }
 
 type SandboxDefaults struct {
@@ -139,7 +145,7 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 	if tokenCmd := os.Getenv("CVPS_TOKEN_COMMAND"); tokenCmd != "" {
-		cfg.TokenCommand = tokenCmd
+		cfg.envTokenCommand = tokenCmd
 	}
 	if apiURL := os.Getenv("CVPS_API_URL"); apiURL != "" {
 		cfg.APIBaseURL = apiURL
@@ -183,7 +189,8 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) IsAuthenticated() bool {
-	return c.envToken != "" || c.TokenCommand != "" || c.APIKey != "" || c.AccessToken != ""
+	return c.envToken != "" || c.envTokenCommand != "" || c.TokenCommand != "" ||
+		c.APIKey != "" || c.AccessToken != ""
 }
 
 // Credential is a resolved API credential.
@@ -197,16 +204,20 @@ type Credential struct {
 
 // ResolveCredential resolves the effective credential at client-build time.
 // Precedence: environment token (CVPS_API_TOKEN > CVPS_TOKEN >
-// CVPS_API_KEY) > token_command (CVPS_TOKEN_COMMAND env or config) >
-// stored access_token > stored api_key. Returns (nil, nil) when no
-// credential is configured.
+// CVPS_API_KEY) > token command (CVPS_TOKEN_COMMAND env, then the stored
+// token_command) > stored access_token > stored api_key. Returns
+// (nil, nil) when no credential is configured.
 func (c *Config) ResolveCredential() (*Credential, error) {
 	if c.envToken != "" {
 		return credentialFromToken(c.envToken), nil
 	}
 
-	if c.TokenCommand != "" {
-		token, err := runTokenCommand(c.TokenCommand)
+	tokenCommand := c.envTokenCommand
+	if tokenCommand == "" {
+		tokenCommand = c.TokenCommand
+	}
+	if tokenCommand != "" {
+		token, err := runTokenCommand(tokenCommand)
 		if err != nil {
 			return nil, err
 		}
