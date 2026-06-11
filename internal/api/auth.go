@@ -117,6 +117,37 @@ func (c *Client) checkDeviceAuth(ctx context.Context, deviceCode string) (*Token
 	return &token, nil
 }
 
+// RequestEmailOtpResponse is the generic acknowledgement returned by the
+// backend whether or not the account exists (anti-enumeration).
+type RequestEmailOtpResponse struct {
+	Message string `json:"message"`
+}
+
+// RequestEmailOtp asks the backend to email a single-use sign-in code to
+// the account's registered address (HLM-413/HLM-414 agent bootstrap).
+func (c *Client) RequestEmailOtp(ctx context.Context, email string) (*RequestEmailOtpResponse, error) {
+	var out RequestEmailOtpResponse
+	if err := c.Post(ctx, "/auth/email-otp/request", map[string]string{
+		"email": email,
+	}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// VerifyEmailOtp exchanges an emailed sign-in code for a session token
+// (same shape as the device-flow exchange).
+func (c *Client) VerifyEmailOtp(ctx context.Context, email, code string) (*TokenResponse, error) {
+	var out TokenResponse
+	if err := c.Post(ctx, "/auth/email-otp/verify", map[string]string{
+		"email": email,
+		"code":  code,
+	}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) GetCurrentUser(ctx context.Context) (*User, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/users/me", nil)
 	if err != nil {

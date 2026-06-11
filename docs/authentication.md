@@ -1,6 +1,6 @@
 # Authentication
 
-The CVPS CLI supports two authentication methods: OAuth (browser-based) and API keys.
+The CVPS CLI supports three authentication methods: OAuth (browser-based), email one-time codes (agent bootstrap, no browser), and API keys.
 
 ## Login
 
@@ -17,6 +17,45 @@ When prompted, choose option `1` (or press Enter for default). The CLI will:
 2. Display a verification code
 3. Wait for you to complete authentication in the browser
 4. Save your access token securely
+
+### Email Code Authentication (agent bootstrap, no browser)
+
+For a fresh machine with **no existing session and no pre-shared token** —
+the agent-completable bootstrap (HLM-413). The backend emails a single-use
+code to the account's registered address; whoever controls that mailbox
+(e.g. an agent with IMAP / Gmail API access) completes the login with zero
+human interaction.
+
+One-shot (interactive or piped):
+
+```bash
+cvps login --email agent@example.com
+# sends the code, then reads it from stdin (TTY prompt for humans)
+```
+
+Two-step, fully unattended (read your mailbox between the steps; the code
+travels via **stdin**, never argv):
+
+```bash
+cvps login --email agent@example.com --request-only
+# ... agent reads its own mailbox and extracts the XXXX-XXXX code ...
+printf '%s' "$CODE" | cvps login --email agent@example.com --with-code
+```
+
+The resulting session lasts 24 hours. Mint a durable **scoped** token from
+it for subsequent unattended runs:
+
+```bash
+cvps token create --name agent-x --scope sandboxes:read --scope sandboxes:write --expires-in 30d
+```
+
+Notes:
+- Codes are single-use, expire after 10 minutes, and allow 5 attempts.
+- The request endpoint always answers generically (no account enumeration);
+  resends are rate limited (60s cooldown, 5/hour per account).
+- Token scopes are enforced by the backend (HLM-384): a minted token can
+  only call endpoints its scopes allow and can never mint further tokens —
+  token management always requires a session login (browser or email code).
 
 ### API Key Authentication
 
