@@ -145,6 +145,17 @@ func loginWithEmailOtp(cfg *config.Config) error {
 	client := api.NewClient(cfg.APIBaseURL, "")
 	ctx := context.Background()
 
+	// Fail fast BEFORE requesting a code: the request consumes the
+	// per-account resend cooldown/quota and sends a real email, so a
+	// combined flow that can never read the code (--no-interactive with
+	// a TTY stdin) must not trigger it. --request-only never reads the
+	// code, so it is exempt.
+	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	willReadCode := !loginRequestOnly
+	if willReadCode && noInteractive && stdinIsTTY {
+		return fmt.Errorf("reading the code under --no-interactive requires piped stdin; use --request-only first, then 'printf '%%s' \"$CODE\" | cvps login --email %s --with-code'", loginEmail)
+	}
+
 	if !loginWithCode {
 		ack, err := client.RequestEmailOtp(ctx, loginEmail)
 		if err != nil {
@@ -157,10 +168,6 @@ func loginWithEmailOtp(cfg *config.Config) error {
 		}
 	}
 
-	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
-	if noInteractive && stdinIsTTY {
-		return fmt.Errorf("reading the code under --no-interactive requires piped stdin; use --request-only first, then 'printf '%%s' \"$CODE\" | cvps login --email %s --with-code'", loginEmail)
-	}
 	if stdinIsTTY {
 		fmt.Fprint(os.Stderr, "Enter code: ")
 	}
