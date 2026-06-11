@@ -21,11 +21,14 @@ var (
 	tokenCreateExpiresAt string
 )
 
-const tokenScopeCaveat = `CAVEAT: scopes are stored by the backend but NOT YET ENFORCED - a minted
-token currently carries the holder's full entitlement regardless of
---scope. Treat --scope as advisory metadata until backend scope
-enforcement lands (HLM-384). Expiry and revocation ARE enforced at auth
-time.`
+const tokenScopeCaveat = `Scopes are ENFORCED by the backend (since HLM-384): a minted token can
+only call endpoints its scopes allow, never manage other tokens, and
+never reach admin/billing surfaces. Allowed scopes: sandboxes:read,
+sandboxes:write, secrets:read, secrets:write, secrets:attach (unknown
+scopes are rejected at mint time; omitting --scope grants
+sandboxes:read + sandboxes:write). Expiry and revocation are enforced
+at auth time. Against an older backend that predates enforcement,
+scopes are stored but not yet checked.`
 
 var tokenCmd = &cobra.Command{
 	Use:   "token",
@@ -82,7 +85,7 @@ func init() {
 	tokenCmd.AddCommand(tokenRevokeCmd)
 
 	tokenCreateCmd.Flags().StringVar(&tokenCreateName, "name", "", "name for the token (required)")
-	tokenCreateCmd.Flags().StringArrayVar(&tokenCreateScopes, "scope", nil, "scope to grant (repeatable; ADVISORY until backend enforcement lands - see command help)")
+	tokenCreateCmd.Flags().StringArrayVar(&tokenCreateScopes, "scope", nil, "scope to grant (repeatable; enforced by the backend - see command help for the allowed list)")
 	tokenCreateCmd.Flags().StringVar(&tokenCreateExpiresIn, "expires-in", "", "expiry as a duration from now (e.g. 30m, 12h, 7d, 4w)")
 	tokenCreateCmd.Flags().StringVar(&tokenCreateExpiresAt, "expires-at", "", "expiry as an absolute RFC 3339 timestamp (e.g. 2026-07-01T00:00:00Z)")
 	_ = tokenCreateCmd.MarkFlagRequired("name")
@@ -169,7 +172,7 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Fprintf(os.Stderr, "  Expires: never\n")
 	}
-	fmt.Fprintf(os.Stderr, "  Scopes:  %s (advisory until backend enforcement lands)\n", strings.Join(key.Scopes, ", "))
+	fmt.Fprintf(os.Stderr, "  Scopes:  %s (enforced by the backend)\n", strings.Join(key.Scopes, ", "))
 	fmt.Fprintf(os.Stderr, "\nThe key below is shown ONCE and cannot be retrieved again.\n")
 	fmt.Println(key.Key)
 	return nil
