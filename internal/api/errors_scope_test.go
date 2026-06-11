@@ -21,7 +21,7 @@ func TestAPIErrorScopeRendering(t *testing.T) {
 				Required:   "sandboxes:write",
 				Message:    "API key is missing required scope: sandboxes:write",
 			},
-			want: []string{"sandboxes:write", "cvps token create --scope sandboxes:write"},
+			want: []string{"sandboxes:write", "cvps token create --name <name> --scope sandboxes:write"},
 		},
 		{
 			name: "session_auth_required points at bootstrap login",

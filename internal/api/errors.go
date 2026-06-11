@@ -38,7 +38,7 @@ func (e *APIError) Error() string {
 			required = "<unknown>"
 		}
 		return fmt.Sprintf(
-			"this token lacks the required scope: %s (mint one with 'cvps token create --scope %s' from a session login)",
+			"this token lacks the required scope: %s (mint one with 'cvps token create --name <name> --scope %s' from a session login)",
 			required, required,
 		)
 	case "session_auth_required":
