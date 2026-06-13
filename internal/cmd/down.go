@@ -21,7 +21,7 @@ var (
 )
 
 var downCmd = &cobra.Command{
-	Use:   "down [sandbox-id]",
+	Use:   "down [sandbox-id|name]",
 	Short: "Terminate a sandbox",
 	Long: `Terminate (delete) a sandbox.
 
@@ -32,8 +32,9 @@ Warning: This action is irreversible. All data in the sandbox will be lost.`,
 	Example: `  # Terminate current sandbox
   cvps down
 
-  # Terminate specific sandbox
+  # Terminate specific sandbox by ID or exact name
   cvps down sbx-abc123
+  cvps down my-project
 
   # Force terminate without confirmation
   cvps down --force
@@ -74,7 +75,10 @@ func runDown(cmd *cobra.Command, args []string) error {
 	// Get sandbox ID from args or context
 	sandboxID := ""
 	if len(args) > 0 {
-		sandboxID = args[0]
+		sandboxID, err = resolveSandboxRef(ctx, client, args[0])
+		if err != nil {
+			return err
+		}
 	} else {
 		id, err := getCurrentSandboxID()
 		if err != nil {

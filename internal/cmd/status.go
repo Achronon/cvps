@@ -79,7 +79,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Get sandbox ID from args or context
 	sandboxID := ""
 	if len(args) > 0 {
-		sandboxID, err = resolveSandboxRefForStatus(ctx, client, args[0])
+		sandboxID, err = resolveSandboxRef(ctx, client, args[0])
 		if err != nil {
 			return err
 		}
@@ -104,7 +104,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return showSandboxStatus(ctx, client, sandboxID)
 }
 
-func resolveSandboxRefForStatus(ctx context.Context, client *api.Client, ref string) (string, error) {
+func resolveSandboxRef(ctx context.Context, client *api.Client, ref string) (string, error) {
 	if looksLikeSandboxID(ref) {
 		return strings.TrimSpace(ref), nil
 	}
