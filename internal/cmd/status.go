@@ -35,8 +35,9 @@ If no local context exists, falls back to listing all sandboxes.`,
   # Show all sandboxes
   cvps status --all
 
-  # Show specific sandbox
+  # Show specific sandbox by ID or exact name
   cvps status sbx-abc123
+  cvps status my-project
 
   # Watch status continuously
   cvps status --watch`,
@@ -78,7 +79,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Get sandbox ID from args or context
 	sandboxID := ""
 	if len(args) > 0 {
-		sandboxID = args[0]
+		sandboxID, err = resolveSandboxRefForStatus(ctx, client, args[0])
+		if err != nil {
+			return err
+		}
 	} else {
 		id, err := getCurrentSandboxID()
 		if err != nil {
@@ -98,6 +102,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return showSandboxStatus(ctx, client, sandboxID)
+}
+
+func resolveSandboxRefForStatus(ctx context.Context, client *api.Client, ref string) (string, error) {
+	if looksLikeSandboxID(ref) {
+		return strings.TrimSpace(ref), nil
+	}
+	return resolveSandboxIDByName(ctx, client, ref)
 }
 
 func listAllSandboxes(ctx context.Context, client *api.Client) error {
@@ -219,7 +230,7 @@ func watchSandbox(ctx context.Context, client *api.Client, sandboxID string) err
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			sandbox, err := client.GetSandboxStatus(ctx, sandboxID)
+			sandbox, err := client.GetSandbox(ctx, sandboxID)
 			if err != nil {
 				fmt.Printf("Error: %s\n", err)
 				continue

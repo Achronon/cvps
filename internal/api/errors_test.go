@@ -44,3 +44,19 @@ func TestAPIError_CodeWithoutMessageHasNoTrailingColon(t *testing.T) {
 		t.Errorf("Error() = %q, want bare code", apiErr.Error())
 	}
 }
+
+func TestAPIError_DecodesNestValidationMessageArray(t *testing.T) {
+	body := []byte(`{"statusCode":400,"message":["storageGb must not be less than 5","storageGb must be an integer number"],"error":"Bad Request"}`)
+
+	var apiErr APIError
+	if err := json.Unmarshal(body, &apiErr); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if apiErr.Message != "storageGb must not be less than 5; storageGb must be an integer number" {
+		t.Fatalf("Message = %q", apiErr.Message)
+	}
+	if got := apiErr.Error(); got != "Bad Request: storageGb must not be less than 5; storageGb must be an integer number" {
+		t.Fatalf("Error() = %q", got)
+	}
+}

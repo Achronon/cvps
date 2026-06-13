@@ -335,6 +335,67 @@ func TestRunUp_ProvisioningFailed(t *testing.T) {
 	}
 }
 
+func TestRunUp_UsesFullSandboxWhenStatusEndpointIsStale(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldConfigDir := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldConfigDir)
+
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	fullSandboxFetched := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandboxes":
+			json.NewEncoder(w).Encode(api.Sandbox{
+				ID:        "sbx-stale-123",
+				Name:      "stale-status",
+				Status:    "PROVISIONING",
+				CPUCores:  2,
+				MemoryGB:  4,
+				StorageGB: 5,
+			})
+		case "/sandboxes/sbx-stale-123/status":
+			json.NewEncoder(w).Encode(map[string]string{"status": "PROVISIONING"})
+		case "/sandboxes/sbx-stale-123":
+			fullSandboxFetched = true
+			json.NewEncoder(w).Encode(api.Sandbox{
+				ID:        "sbx-stale-123",
+				Name:      "stale-status",
+				Status:    "RUNNING",
+				CPUCores:  2,
+				MemoryGB:  4,
+				StorageGB: 5,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "test-key"
+	cfg.APIBaseURL = server.URL
+	config.Save(cfg)
+
+	upName = "stale-status"
+	upCPU = 2
+	upMemory = 4
+	upStorage = 5
+	upDetach = false
+	upDedicatedIP = false
+	upAcceptAup = false
+
+	if err := runUp(nil, nil); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !fullSandboxFetched {
+		t.Fatal("expected full sandbox fetch to break stale status loop")
+	}
+}
+
 func TestSaveLoadLocalContext(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -511,6 +572,7 @@ func TestCreateErrorHint(t *testing.T) {
 		{"dedicated_ip_capacity", true},
 		{"phone_verification_required", true},
 		{"mfa_required", true},
+		{"capacity_exhausted", true},
 		{"plan_limit_exceeded", false},
 		{"", false},
 	}
