@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/achronon/cvps/internal/api"
@@ -156,6 +157,135 @@ func TestRunDown_WithForceFlag(t *testing.T) {
 
 	if !deleteCalled {
 		t.Error("Expected DELETE to be called")
+	}
+}
+
+func TestRunDown_WithExactName(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldConfigDir := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldConfigDir)
+
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	listCalled := false
+	deleteCalled := false
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandboxes":
+			listCalled = true
+			resp := api.SandboxList{
+				Data: []api.Sandbox{
+					{ID: "sbx-by-name", Name: "finances-harvest-bootstrap", Status: "running"},
+				},
+				Total: 1,
+				Page:  1,
+				Limit: 100,
+			}
+			json.NewEncoder(w).Encode(resp)
+		case "/sandboxes/sbx-by-name":
+			if r.Method == "GET" {
+				if deleted {
+					w.WriteHeader(http.StatusNotFound)
+					json.NewEncoder(w).Encode(api.APIError{
+						StatusCode: 404,
+						Message:    "Sandbox not found",
+					})
+				} else {
+					json.NewEncoder(w).Encode(api.Sandbox{
+						ID:     "sbx-by-name",
+						Name:   "finances-harvest-bootstrap",
+						Status: "running",
+					})
+				}
+			} else if r.Method == "DELETE" {
+				deleteCalled = true
+				deleted = true
+				w.WriteHeader(http.StatusNoContent)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "test-key"
+	cfg.APIBaseURL = server.URL
+	config.Save(cfg)
+
+	downForce = true
+	downAll = false
+
+	err := runDown(nil, []string{"finances-harvest-bootstrap"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !listCalled {
+		t.Error("Expected sandbox list to be called for name resolution")
+	}
+	if !deleteCalled {
+		t.Error("Expected DELETE to be called for resolved sandbox ID")
+	}
+}
+
+func TestRunDown_AmbiguousExactName(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldConfigDir := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldConfigDir)
+
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	deleteCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandboxes":
+			resp := api.SandboxList{
+				Data: []api.Sandbox{
+					{ID: "sbx-one", Name: "dupe", Status: "running"},
+					{ID: "sbx-two", Name: "DUPE", Status: "running"},
+				},
+				Total: 2,
+				Page:  1,
+				Limit: 100,
+			}
+			json.NewEncoder(w).Encode(resp)
+		case "/sandboxes/sbx-one", "/sandboxes/sbx-two":
+			if r.Method == "DELETE" {
+				deleteCalled = true
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "test-key"
+	cfg.APIBaseURL = server.URL
+	config.Save(cfg)
+
+	downForce = true
+	downAll = false
+
+	err := runDown(nil, []string{"dupe"})
+	if err == nil {
+		t.Fatal("Expected ambiguity error")
+	}
+	if !strings.Contains(err.Error(), "sandbox name \"dupe\" is ambiguous") ||
+		!strings.Contains(err.Error(), "sbx-one") ||
+		!strings.Contains(err.Error(), "sbx-two") {
+		t.Fatalf("Unexpected ambiguity error: %v", err)
+	}
+	if deleteCalled {
+		t.Error("Expected no DELETE when name is ambiguous")
 	}
 }
 
