@@ -1,6 +1,10 @@
 package api
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 type APIError struct {
 	StatusCode int    `json:"-"`
@@ -16,6 +20,59 @@ type APIError struct {
 	// insufficient_scope (HLM-384 contract).
 	Required string `json:"required,omitempty"`
 	Details  any    `json:"details,omitempty"`
+}
+
+func (e *APIError) UnmarshalJSON(data []byte) error {
+	type rawAPIError struct {
+		StatusCode int             `json:"statusCode,omitempty"`
+		Message    json.RawMessage `json:"message,omitempty"`
+		Code       string          `json:"code,omitempty"`
+		ErrorCode  string          `json:"error,omitempty"`
+		Required   string          `json:"required,omitempty"`
+		Details    any             `json:"details,omitempty"`
+	}
+
+	var raw rawAPIError
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	e.StatusCode = raw.StatusCode
+	e.Message = normalizeAPIErrorMessage(raw.Message)
+	e.Code = raw.Code
+	e.ErrorCode = raw.ErrorCode
+	e.Required = raw.Required
+	e.Details = raw.Details
+	return nil
+}
+
+func normalizeAPIErrorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	var message string
+	if err := json.Unmarshal(raw, &message); err == nil {
+		return message
+	}
+
+	var messages []string
+	if err := json.Unmarshal(raw, &messages); err == nil {
+		return strings.Join(messages, "; ")
+	}
+
+	var values []any
+	if err := json.Unmarshal(raw, &values); err == nil {
+		parts := make([]string, 0, len(values))
+		for _, value := range values {
+			if text, ok := value.(string); ok && text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	}
+
+	return string(raw)
 }
 
 // ErrCode returns the machine-readable error code regardless of which

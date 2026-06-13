@@ -224,3 +224,75 @@ func TestRunStatus_NoContextFallsBackToListAll(t *testing.T) {
 		t.Fatalf("expected fallback to list all sandboxes, got error: %v", err)
 	}
 }
+
+func TestRunStatus_ResolvesSandboxNameArgument(t *testing.T) {
+	homeDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", homeDir)
+	defer os.Setenv("HOME", oldHome)
+
+	workDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(workDir)
+	defer os.Chdir(oldWd)
+
+	detailFetched := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandboxes":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.SandboxList{
+				Data: []api.Sandbox{
+					{
+						ID:        "cmlt6ghp0000101dyq5j3d5xu",
+						Name:      "finances-harvest-bootstrap",
+						Status:    "RUNNING",
+						CPUCores:  2,
+						MemoryGB:  4,
+						StorageGB: 5,
+					},
+				},
+				Total: 1,
+				Page:  1,
+				Limit: 100,
+			})
+		case "/sandboxes/cmlt6ghp0000101dyq5j3d5xu":
+			detailFetched = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.Sandbox{
+				ID:        "cmlt6ghp0000101dyq5j3d5xu",
+				Name:      "finances-harvest-bootstrap",
+				Status:    "RUNNING",
+				CPUCores:  2,
+				MemoryGB:  4,
+				StorageGB: 5,
+				CreatedAt: "2026-06-13T10:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIBaseURL = server.URL
+	cfg.APIKey = "test-api-key"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	origAll, origJSON, origWatch := statusAll, statusJSON, statusWatch
+	statusAll = false
+	statusJSON = true
+	statusWatch = false
+	t.Cleanup(func() {
+		statusAll, statusJSON, statusWatch = origAll, origJSON, origWatch
+	})
+
+	if err := runStatus(nil, []string{"finances-harvest-bootstrap"}); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+	if !detailFetched {
+		t.Fatal("expected status to fetch the resolved sandbox id")
+	}
+}

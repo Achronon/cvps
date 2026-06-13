@@ -45,7 +45,14 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
+	client, err := api.NewClientFromConfig(cfg)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
 	sandboxID := ""
+	usedArg := len(args) > 0
 	if len(args) > 0 {
 		sandboxID = args[0]
 	} else {
@@ -56,11 +63,15 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		sandboxID = id
 	}
 
-	client, err := api.NewClientFromConfig(cfg)
-	if err != nil {
-		return err
+	logs, err := client.GetSandboxLogs(ctx, sandboxID, logsTail)
+	if err != nil && api.IsNotFound(err) && usedArg && !looksLikeSandboxID(sandboxID) {
+		resolvedID, resolveErr := resolveSandboxIDByName(ctx, client, sandboxID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		sandboxID = resolvedID
+		logs, err = client.GetSandboxLogs(ctx, sandboxID, logsTail)
 	}
-	logs, err := client.GetSandboxLogs(context.Background(), sandboxID, logsTail)
 	if err != nil {
 		if api.IsNotFound(err) {
 			return fmt.Errorf("sandbox not found: %s", sandboxID)

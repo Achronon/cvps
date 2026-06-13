@@ -191,7 +191,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
-		status, err := client.GetSandboxStatus(ctx, sandbox.ID)
+		status, err := pollSandboxForUp(ctx, client, sandbox)
 		if err != nil {
 			s.Stop()
 			return fmt.Errorf("failed to get status: %w", err)
@@ -202,13 +202,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(strings.TrimSpace(status.Status)) {
 		case "running":
 			s.Stop()
-			// The /status endpoint only carries {status,details}; fetch
-			// the full sandbox so resources/SSH/dedicated IP are real.
-			full, fetchErr := client.GetSandbox(ctx, sandbox.ID)
-			if fetchErr != nil {
-				full = sandbox
-			}
-			printSandboxReady(full)
+			printSandboxReady(status)
 			saveLocalContext(sandbox.ID, sandbox.Name)
 			return nil
 
@@ -225,6 +219,33 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	s.Stop()
 	return fmt.Errorf("timeout waiting for sandbox to be ready (waited %s)", timeout)
+}
+
+func pollSandboxForUp(ctx context.Context, client *api.Client, created *api.Sandbox) (*api.Sandbox, error) {
+	status, err := client.GetSandboxStatus(ctx, created.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// The /status endpoint can lag the full sandbox resource. Fetch the full
+	// record for RUNNING details and whenever /status is still non-terminal,
+	// allowing DB status to break a stale PROVISIONING loop.
+	normalized := strings.ToLower(strings.TrimSpace(status.Status))
+	if normalized == "running" || normalized == "provisioning" || normalized == "starting" {
+		full, fetchErr := client.GetSandbox(ctx, created.ID)
+		if fetchErr == nil && strings.TrimSpace(full.Status) != "" {
+			fullStatus := strings.ToLower(strings.TrimSpace(full.Status))
+			if normalized == "running" || fullStatus != normalized {
+				return full, nil
+			}
+		}
+		if normalized == "running" {
+			created.Status = status.Status
+			return created, nil
+		}
+	}
+
+	return status, nil
 }
 
 // parseEnvOverrides turns repeatable --env KEY=VALUE flags into the
@@ -317,6 +338,8 @@ func createErrorHint(err error) string {
 		return "Multi-factor authentication is required for dedicated-IP sandboxes.\nEnable MFA in the dashboard under Settings, then retry."
 	case "unsupported_runtime_for_create":
 		return "This runtime profile isn't enabled for self-serve creation. Gated\nprofiles (e.g. agent services like cortex) need the operator to enable\nthem (SELF_SERVE_EXTRA_RUNTIME_SLUGS on the backend)."
+	case "capacity_exhausted":
+		return "The CVPS cluster does not currently have enough free capacity for this\nsandbox shape. Retry with a smaller --cpu, --memory, or --storage value, or\nask an operator to inspect admin/billing/capacity/sandbox before changing\ninfra capacity."
 	}
 	return ""
 }
