@@ -148,3 +148,21 @@ func (c *Client) RestartSandbox(ctx context.Context, id string) (*Sandbox, error
 	}
 	return &sandbox, nil
 }
+
+// ResizeSandboxRequest is the body of PATCH /sandboxes/:id (HLM-432).
+type ResizeSandboxRequest struct {
+	// StorageGB is the new total workspace size in GB. Grow only — the backend
+	// rejects a value at or below the current size (Longhorn cannot shrink).
+	StorageGB int `json:"storageGb"`
+}
+
+// ResizeSandbox grows a sandbox's workspace storage to newStorageGB. Storage is
+// grow-only; Longhorn expands the attached RWO volume online (no pod restart).
+func (c *Client) ResizeSandbox(ctx context.Context, id string, newStorageGB int) (*Sandbox, error) {
+	var sandbox Sandbox
+	req := &ResizeSandboxRequest{StorageGB: newStorageGB}
+	if err := c.Patch(ctx, "/sandboxes/"+id, req, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
+}

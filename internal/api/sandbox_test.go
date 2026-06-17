@@ -186,6 +186,45 @@ func TestGetSandboxStatus(t *testing.T) {
 	}
 }
 
+func TestResizeSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("Expected PATCH request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sb-123" {
+			t.Errorf("Expected path /sandboxes/sb-123, got %s", r.URL.Path)
+		}
+
+		var req ResizeSandboxRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Failed to decode request: %v", err)
+		}
+		if req.StorageGB != 50 {
+			t.Errorf("Expected storageGb 50, got %d", req.StorageGB)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{
+			ID:        "sb-123",
+			Name:      "test-sandbox",
+			Status:    "running",
+			StorageGB: req.StorageGB,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.ResizeSandbox(context.Background(), "sb-123", 50)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if sandbox.StorageGB != 50 {
+		t.Errorf("Expected StorageGB 50, got %d", sandbox.StorageGB)
+	}
+}
+
 func TestDeleteSandbox(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "DELETE" {
