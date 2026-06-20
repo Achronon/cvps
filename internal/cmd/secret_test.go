@@ -125,9 +125,18 @@ func TestSecretCommandRegistered(t *testing.T) {
 	for _, c := range secretCmd.Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"create", "list", "rm"} {
+	for _, want := range []string{"create", "list", "rm", "attach", "detach"} {
 		if !names[want] {
 			t.Errorf("Expected 'cvps secret %s' to be registered", want)
 		}
+	}
+}
+
+func TestSecretAttachDetachSandboxFlagsRegistered(t *testing.T) {
+	if secretAttachCmd.Flags().Lookup("sandbox") == nil {
+		t.Fatal("Expected 'cvps secret attach' to register --sandbox")
+	}
+	if secretDetachCmd.Flags().Lookup("sandbox") == nil {
+		t.Fatal("Expected 'cvps secret detach' to register --sandbox")
 	}
 }

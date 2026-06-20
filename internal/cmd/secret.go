@@ -22,6 +22,8 @@ var (
 	secretCreateDescription string
 	secretCreateCategory    string
 	secretCreateValueFile   string
+	secretAttachSandbox     string
+	secretDetachSandbox     string
 	secretRmForce           bool
 )
 
@@ -83,11 +85,39 @@ Deleting a secret also detaches it from any sandboxes that use it.`,
 	RunE: runSecretRm,
 }
 
+var secretAttachCmd = &cobra.Command{
+	Use:   "attach <KEY>",
+	Short: "Attach a secret to a running sandbox",
+	Long: `Attach an existing tenant secret to a running sandbox.
+
+The backend updates the sandbox-secret association and rolls the workload so
+envFrom is re-read. Secret values are never printed.`,
+	Example: `  cvps secret attach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
+  cvps secret attach ANTHROPIC_API_KEY --sandbox cmqalvgn2000c01cpnqc7fn8f`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSecretAttach,
+}
+
+var secretDetachCmd = &cobra.Command{
+	Use:   "detach <KEY>",
+	Short: "Detach a secret from a running sandbox",
+	Long: `Detach an existing tenant secret from a running sandbox.
+
+The backend removes only that sandbox-secret association and rolls the workload
+when a row was removed. Secret values are never printed.`,
+	Example: `  cvps secret detach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
+  cvps secret detach ANTHROPIC_API_KEY --sandbox cmqalvgn2000c01cpnqc7fn8f`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSecretDetach,
+}
+
 func init() {
 	rootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(secretCreateCmd)
 	secretCmd.AddCommand(secretListCmd)
 	secretCmd.AddCommand(secretRmCmd)
+	secretCmd.AddCommand(secretAttachCmd)
+	secretCmd.AddCommand(secretDetachCmd)
 
 	secretCreateCmd.Flags().StringVar(&secretCreateName, "name", "", "human-readable name (defaults to the key)")
 	secretCreateCmd.Flags().StringVar(&secretCreateDescription, "description", "", "optional description")
@@ -95,6 +125,8 @@ func init() {
 	secretCreateCmd.Flags().StringVar(&secretCreateValueFile, "value-file", "", "read the secret value from this file ('-' for stdin)")
 
 	secretRmCmd.Flags().BoolVarP(&secretRmForce, "force", "f", false, "skip confirmation prompt")
+	secretAttachCmd.Flags().StringVar(&secretAttachSandbox, "sandbox", "", "sandbox ID or exact name to attach the secret to")
+	secretDetachCmd.Flags().StringVar(&secretDetachSandbox, "sandbox", "", "sandbox ID or exact name to detach the secret from")
 }
 
 func newAuthenticatedClient() (*api.Client, error) {
@@ -285,5 +317,62 @@ func runSecretRm(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Secret deleted: %s\n", display)
+	return nil
+}
+
+func runSecretAttach(cmd *cobra.Command, args []string) error {
+	return runSecretRuntimeMutation(args[0], secretAttachSandbox, true)
+}
+
+func runSecretDetach(cmd *cobra.Command, args []string) error {
+	return runSecretRuntimeMutation(args[0], secretDetachSandbox, false)
+}
+
+func runSecretRuntimeMutation(key, sandboxRef string, attach bool) error {
+	if !secretKeyPattern.MatchString(key) {
+		return fmt.Errorf("invalid secret key %q: must be a valid environment variable name (uppercase letters, numbers, underscores; e.g. TELEGRAM_BOT_TOKEN)", key)
+	}
+	sandboxRef = strings.TrimSpace(sandboxRef)
+	if sandboxRef == "" {
+		return fmt.Errorf("--sandbox is required")
+	}
+
+	client, err := newAuthenticatedClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	sandboxID, err := resolveSandboxRef(ctx, client, sandboxRef)
+	if err != nil {
+		return err
+	}
+
+	verb := "attach"
+	progress := "Attaching"
+	if !attach {
+		verb = "detach"
+		progress = "Detaching"
+	}
+	fmt.Printf("%s secret %s for sandbox %s...\n", progress, key, sandboxID)
+
+	var sandbox *api.Sandbox
+	if attach {
+		sandbox, err = client.AttachSecretToSandbox(ctx, sandboxID, key)
+	} else {
+		sandbox, err = client.DetachSecretFromSandbox(ctx, sandboxID, key)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to %s secret %s: %w", verb, key, err)
+	}
+
+	past := "attached"
+	if !attach {
+		past = "detached"
+	}
+	fmt.Printf("✓ Secret %s %s for sandbox %s. Status: %s\n", key, past, sandbox.ID, sandbox.Status)
+	if strings.EqualFold(sandbox.Status, "PROVISIONING") {
+		fmt.Println("Use 'cvps status --watch' to follow the rollout.")
+	}
 	return nil
 }

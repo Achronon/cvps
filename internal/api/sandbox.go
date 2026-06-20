@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 )
 
 type SandboxDedicatedIp struct {
@@ -145,6 +148,49 @@ func (c *Client) RestartSandbox(ctx context.Context, id string) (*Sandbox, error
 	var sandbox Sandbox
 	if err := c.Post(ctx, "/sandboxes/"+id+"/restart", nil, &sandbox); err != nil {
 		return nil, err
+	}
+	return &sandbox, nil
+}
+
+// AttachSecretToSandbox attaches an existing tenant secret by key to a running
+// sandbox and triggers the backend rollout needed for envFrom to be re-read.
+func (c *Client) AttachSecretToSandbox(ctx context.Context, sandboxID, key string) (*Sandbox, error) {
+	var sandbox Sandbox
+	path := fmt.Sprintf(
+		"/sandboxes/%s/secrets/%s",
+		url.PathEscape(sandboxID),
+		url.PathEscape(key),
+	)
+	if err := c.Post(ctx, path, nil, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
+}
+
+// DetachSecretFromSandbox detaches an existing tenant secret by key from a
+// running sandbox and triggers the backend rollout only when the association
+// existed.
+func (c *Client) DetachSecretFromSandbox(ctx context.Context, sandboxID, key string) (*Sandbox, error) {
+	var sandbox Sandbox
+	path := fmt.Sprintf(
+		"/sandboxes/%s/secrets/%s",
+		url.PathEscape(sandboxID),
+		url.PathEscape(key),
+	)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doAuthenticatedRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := c.checkResponse(resp); err != nil {
+		return nil, err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sandbox); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	return &sandbox, nil
 }

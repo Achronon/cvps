@@ -124,6 +124,7 @@ transport is Socket.IO. Use the default SSH method.
 | `cvps migrate` | Upload local workspace |
 | `cvps config` | Manage configuration |
 | `cvps token` | Mint/manage API tokens for agents (scopes enforced by the backend) |
+| `cvps secret` | Create/list/delete secrets and attach/detach them to running sandboxes |
 
 ## Configuration
 
@@ -163,6 +164,14 @@ Credential precedence: env (`CVPS_API_TOKEN` > `CVPS_TOKEN` > `CVPS_API_KEY`)
 Pass `--no-interactive` to make any command that would prompt (login method
 chooser, `down` confirmation, `secret rm` confirmation, `secret create`
 hidden prompt) fail fast with a clear error instead of hanging an agent.
+
+Attach an existing secret to a running sandbox and roll the workload so
+environment variables are re-read:
+
+```bash
+cvps secret attach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
+cvps secret detach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
+```
 
 ## Environment Variables
 

@@ -206,3 +206,67 @@ func TestDeleteSandbox(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 }
+
+func TestAttachSecretToSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sbx-123/secrets/TELEGRAM_BOT_TOKEN" {
+			t.Errorf("Expected attach path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{
+			ID:     "sbx-123",
+			Name:   "cortex-brain",
+			Status: "PROVISIONING",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.AttachSecretToSandbox(
+		context.Background(),
+		"sbx-123",
+		"TELEGRAM_BOT_TOKEN",
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if sandbox.ID != "sbx-123" || sandbox.Status != "PROVISIONING" {
+		t.Fatalf("unexpected sandbox response: %+v", sandbox)
+	}
+}
+
+func TestDetachSecretFromSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Expected DELETE request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sbx-123/secrets/TELEGRAM_BOT_TOKEN" {
+			t.Errorf("Expected detach path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{
+			ID:     "sbx-123",
+			Name:   "cortex-brain",
+			Status: "PROVISIONING",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.DetachSecretFromSandbox(
+		context.Background(),
+		"sbx-123",
+		"TELEGRAM_BOT_TOKEN",
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if sandbox.ID != "sbx-123" || sandbox.Status != "PROVISIONING" {
+		t.Fatalf("unexpected sandbox response: %+v", sandbox)
+	}
+}
