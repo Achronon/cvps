@@ -125,6 +125,7 @@ transport is Socket.IO. Use the default SSH method.
 | `cvps config` | Manage configuration |
 | `cvps token` | Mint/manage API tokens for agents (scopes enforced by the backend) |
 | `cvps secret` | Create/list/delete secrets and attach/detach them to running sandboxes |
+| `cvps allow` | Manage same-tenant sandbox-to-sandbox reachability rules |
 
 ## Configuration
 
@@ -171,6 +172,14 @@ environment variables are re-read:
 ```bash
 cvps secret attach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
 cvps secret detach TELEGRAM_BOT_TOKEN --sandbox cortex-brain
+```
+
+Allow one sandbox to reach another same-tenant sandbox on a TCP port:
+
+```bash
+cvps allow cortex-brain --to cortex-worker:8788
+cvps allow list cortex-brain
+cvps allow revoke cortex-brain --to cortex-worker:8788
 ```
 
 ## Environment Variables
