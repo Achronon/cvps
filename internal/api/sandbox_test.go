@@ -207,6 +207,108 @@ func TestDeleteSandbox(t *testing.T) {
 	}
 }
 
+func TestListSandboxAllowRules(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("Expected GET request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sbx-123/allow-rules" {
+			t.Errorf("Expected allow-rules path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]SandboxAllowRule{{
+			ID:              "allow-1",
+			SourceSandboxID: "sbx-123",
+			TargetSandboxID: "sbx-456",
+			Port:            8788,
+			Protocol:        "TCP",
+		}})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	rules, err := client.ListSandboxAllowRules(context.Background(), "sbx-123")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].TargetSandboxID != "sbx-456" || rules[0].Port != 8788 {
+		t.Fatalf("unexpected allow rules: %+v", rules)
+	}
+}
+
+func TestAllowSandboxReachability(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sbx-123/allow-rules" {
+			t.Errorf("Expected allow-rules path, got %s", r.URL.Path)
+		}
+
+		var req CreateSandboxAllowRuleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Failed to decode request: %v", err)
+		}
+		if req.TargetSandboxID != "sbx-456" || req.Port != 8788 {
+			t.Fatalf("unexpected request: %+v", req)
+		}
+
+		changed := true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(SandboxAllowRule{
+			ID:              "allow-1",
+			SourceSandboxID: "sbx-123",
+			TargetSandboxID: "sbx-456",
+			Port:            8788,
+			Protocol:        "TCP",
+			Changed:         &changed,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	rule, err := client.AllowSandboxReachability(context.Background(), "sbx-123", "sbx-456", 8788)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if rule.ID != "allow-1" || rule.Changed == nil || !*rule.Changed {
+		t.Fatalf("unexpected allow rule: %+v", rule)
+	}
+}
+
+func TestRevokeSandboxReachability(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Expected DELETE request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sbx-123/allow-rules/sbx-456/8788" {
+			t.Errorf("Expected revoke path, got %s", r.URL.Path)
+		}
+
+		changed := true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(SandboxAllowRule{
+			ID:              "allow-1",
+			SourceSandboxID: "sbx-123",
+			TargetSandboxID: "sbx-456",
+			Port:            8788,
+			Protocol:        "TCP",
+			Changed:         &changed,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	rule, err := client.RevokeSandboxReachability(context.Background(), "sbx-123", "sbx-456", 8788)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if rule.TargetSandboxID != "sbx-456" || rule.Port != 8788 {
+		t.Fatalf("unexpected allow rule: %+v", rule)
+	}
+}
+
 func TestAttachSecretToSandbox(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {

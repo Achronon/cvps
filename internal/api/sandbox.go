@@ -84,6 +84,23 @@ type SandboxLogs struct {
 	Logs    string `json:"logs"`
 }
 
+type SandboxAllowRule struct {
+	ID                string `json:"id,omitempty"`
+	SourceSandboxID   string `json:"sourceSandboxId"`
+	SourceSandboxName string `json:"sourceSandboxName,omitempty"`
+	TargetSandboxID   string `json:"targetSandboxId"`
+	TargetSandboxName string `json:"targetSandboxName,omitempty"`
+	Port              int    `json:"port"`
+	Protocol          string `json:"protocol"`
+	Changed           *bool  `json:"changed,omitempty"`
+	CreatedAt         string `json:"createdAt,omitempty"`
+}
+
+type CreateSandboxAllowRuleRequest struct {
+	TargetSandboxID string `json:"targetSandboxId"`
+	Port            int    `json:"port"`
+}
+
 type SandboxList struct {
 	Data  []Sandbox `json:"data"`
 	Total int       `json:"total"`
@@ -150,6 +167,60 @@ func (c *Client) RestartSandbox(ctx context.Context, id string) (*Sandbox, error
 		return nil, err
 	}
 	return &sandbox, nil
+}
+
+func (c *Client) ListSandboxAllowRules(ctx context.Context, sandboxID string) ([]SandboxAllowRule, error) {
+	var rules []SandboxAllowRule
+	path := fmt.Sprintf(
+		"/sandboxes/%s/allow-rules",
+		url.PathEscape(sandboxID),
+	)
+	if err := c.Get(ctx, path, &rules); err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+func (c *Client) AllowSandboxReachability(ctx context.Context, sourceSandboxID, targetSandboxID string, port int) (*SandboxAllowRule, error) {
+	var rule SandboxAllowRule
+	path := fmt.Sprintf(
+		"/sandboxes/%s/allow-rules",
+		url.PathEscape(sourceSandboxID),
+	)
+	req := CreateSandboxAllowRuleRequest{
+		TargetSandboxID: targetSandboxID,
+		Port:            port,
+	}
+	if err := c.Post(ctx, path, &req, &rule); err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+func (c *Client) RevokeSandboxReachability(ctx context.Context, sourceSandboxID, targetSandboxID string, port int) (*SandboxAllowRule, error) {
+	var rule SandboxAllowRule
+	path := fmt.Sprintf(
+		"/sandboxes/%s/allow-rules/%s/%d",
+		url.PathEscape(sourceSandboxID),
+		url.PathEscape(targetSandboxID),
+		port,
+	)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doAuthenticatedRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := c.checkResponse(resp); err != nil {
+		return nil, err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rule); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &rule, nil
 }
 
 // AttachSecretToSandbox attaches an existing tenant secret by key to a running
