@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	downForce bool
-	downAll   bool
+	downForce            bool
+	downAll              bool
+	downDestructiveGrant string
 )
 
 var downCmd = &cobra.Command{
@@ -39,6 +40,9 @@ Warning: This action is irreversible. All data in the sandbox will be lost.`,
   # Force terminate without confirmation
   cvps down --force
 
+  # Consume a one-shot destructive grant after an external confirmation flow
+  CVPS_DESTRUCTIVE_GRANT=cvps_dgrant_... cvps down sbx-abc123 --force
+
   # Terminate all sandboxes
   cvps down --all`,
 	RunE: runDown,
@@ -49,6 +53,7 @@ func init() {
 
 	downCmd.Flags().BoolVarP(&downForce, "force", "f", false, "skip confirmation prompt")
 	downCmd.Flags().BoolVar(&downAll, "all", false, "terminate all sandboxes")
+	downCmd.Flags().StringVar(&downDestructiveGrant, "destructive-grant", "", "one-shot destructive grant for Cortex-confirmed down/delete")
 }
 
 func runDown(cmd *cobra.Command, args []string) error {
@@ -69,6 +74,9 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// Terminate all sandboxes
 	if downAll {
+		if resolveDestructiveGrant() != "" {
+			return fmt.Errorf("destructive grants are sandbox-bound and cannot be used with --all")
+		}
 		return terminateAllSandboxes(ctx, client)
 	}
 
@@ -124,7 +132,7 @@ func terminateSandbox(ctx context.Context, client *api.Client, sandboxID string)
 	// Delete sandbox
 	fmt.Printf("Terminating sandbox %s...\n", sandboxID)
 
-	if err := client.DeleteSandbox(ctx, sandboxID); err != nil {
+	if err := client.DeleteSandboxWithGrant(ctx, sandboxID, resolveDestructiveGrant()); err != nil {
 		return fmt.Errorf("failed to terminate sandbox: %w", err)
 	}
 
@@ -153,6 +161,13 @@ func terminateSandbox(ctx context.Context, client *api.Client, sandboxID string)
 	fmt.Println("✓ Sandbox termination initiated (may take a few more seconds)")
 	cleanupLocalContext(sandboxID)
 	return nil
+}
+
+func resolveDestructiveGrant() string {
+	if strings.TrimSpace(downDestructiveGrant) != "" {
+		return strings.TrimSpace(downDestructiveGrant)
+	}
+	return strings.TrimSpace(os.Getenv("CVPS_DESTRUCTIVE_GRANT"))
 }
 
 func terminateAllSandboxes(ctx context.Context, client *api.Client) error {

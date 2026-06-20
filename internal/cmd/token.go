@@ -19,6 +19,7 @@ var (
 	tokenCreateScopes    []string
 	tokenCreateExpiresIn string
 	tokenCreateExpiresAt string
+	tokenCreateCortex    bool
 )
 
 const tokenScopeCaveat = `Scopes are ENFORCED by the backend (since HLM-384): a minted token can
@@ -27,7 +28,9 @@ never reach admin/billing surfaces. Allowed scopes: sandboxes:read,
 sandboxes:write, secrets:read, secrets:write, secrets:attach (unknown
 scopes are rejected at mint time; omitting --scope grants
 sandboxes:read + sandboxes:write). Expiry and revocation are enforced
-at auth time. Against an older backend that predates enforcement,
+at auth time. --cortex-control mints the narrower Cortex control profile:
+up/start, status, logs, restart, secret attach, and one-shot confirmed
+down/delete only. Against an older backend that predates enforcement,
 scopes are stored but not yet checked.`
 
 var tokenCmd = &cobra.Command{
@@ -88,6 +91,7 @@ func init() {
 	tokenCreateCmd.Flags().StringArrayVar(&tokenCreateScopes, "scope", nil, "scope to grant (repeatable; enforced by the backend - see command help for the allowed list)")
 	tokenCreateCmd.Flags().StringVar(&tokenCreateExpiresIn, "expires-in", "", "expiry as a duration from now (e.g. 30m, 12h, 7d, 4w)")
 	tokenCreateCmd.Flags().StringVar(&tokenCreateExpiresAt, "expires-at", "", "expiry as an absolute RFC 3339 timestamp (e.g. 2026-07-01T00:00:00Z)")
+	tokenCreateCmd.Flags().BoolVar(&tokenCreateCortex, "cortex-control", false, "mint the fine-grained short-TTL Cortex control token profile")
 	_ = tokenCreateCmd.MarkFlagRequired("name")
 }
 
@@ -152,11 +156,16 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	key, err := client.CreateAPIKey(context.Background(), &api.CreateAPIKeyRequest{
+	req := &api.CreateAPIKeyRequest{
 		Name:      tokenCreateName,
 		Scopes:    tokenCreateScopes,
 		ExpiresAt: expiresAt,
-	})
+	}
+	if tokenCreateCortex {
+		req.CapabilityProfile = "cortex-control"
+	}
+
+	key, err := client.CreateAPIKey(context.Background(), req)
 	if err != nil {
 		return fmt.Errorf("failed to create token: %w", err)
 	}
@@ -171,6 +180,9 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  Expires: %s\n", key.ExpiresAt)
 	} else {
 		fmt.Fprintf(os.Stderr, "  Expires: never\n")
+	}
+	if key.CapabilityProfile != "" {
+		fmt.Fprintf(os.Stderr, "  Profile: %s\n", key.CapabilityProfile)
 	}
 	fmt.Fprintf(os.Stderr, "  Scopes:  %s (enforced by the backend)\n", strings.Join(key.Scopes, ", "))
 	fmt.Fprintf(os.Stderr, "\nThe key below is shown ONCE and cannot be retrieved again.\n")
@@ -195,11 +207,16 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PREFIX\tNAME\tSCOPES\tEXPIRES\tLAST USED\tID")
+	fmt.Fprintln(w, "PREFIX\tNAME\tPROFILE\tSCOPES\tEXPIRES\tLAST USED\tID")
 	for _, k := range keys {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		profile := k.CapabilityProfile
+		if profile == "" {
+			profile = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			k.KeyPrefix,
 			k.Name,
+			profile,
 			strings.Join(k.Scopes, ","),
 			formatTokenDate(k.ExpiresAt, "never"),
 			formatTokenDate(k.LastUsed, "-"),

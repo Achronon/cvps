@@ -160,6 +160,99 @@ func TestRunDown_WithForceFlag(t *testing.T) {
 	}
 }
 
+func TestRunDown_WithDestructiveGrant(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldConfigDir := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldConfigDir)
+
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	const grant = "cvps_dgrant_confirmed"
+	defer func() {
+		downDestructiveGrant = ""
+		downForce = false
+		downAll = false
+	}()
+
+	seenGrant := ""
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sandboxes/sbx-grant":
+			if r.Method == "GET" {
+				if deleted {
+					w.WriteHeader(http.StatusNotFound)
+					json.NewEncoder(w).Encode(api.APIError{
+						StatusCode: 404,
+						Message:    "Sandbox not found",
+					})
+					return
+				}
+				json.NewEncoder(w).Encode(api.Sandbox{
+					ID:     "sbx-grant",
+					Name:   "grant-test",
+					Status: "running",
+				})
+				return
+			}
+			if r.Method == "DELETE" {
+				seenGrant = r.Header.Get("X-CVPS-Destructive-Grant")
+				deleted = true
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "test-key"
+	cfg.APIBaseURL = server.URL
+	config.Save(cfg)
+
+	downForce = true
+	downAll = false
+	downDestructiveGrant = grant
+
+	if err := runDown(nil, []string{"sbx-grant"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if seenGrant != grant {
+		t.Fatalf("DELETE did not receive destructive grant header, got %q", seenGrant)
+	}
+}
+
+func TestRunDown_AllRejectsDestructiveGrant(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldConfigDir := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldConfigDir)
+
+	defer func() {
+		downDestructiveGrant = ""
+		downForce = false
+		downAll = false
+	}()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "test-key"
+	config.Save(cfg)
+
+	downForce = true
+	downAll = true
+	downDestructiveGrant = "cvps_dgrant_confirmed"
+
+	err := runDown(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "sandbox-bound") {
+		t.Fatalf("Expected sandbox-bound grant error, got %v", err)
+	}
+}
+
 func TestRunDown_WithExactName(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldConfigDir := os.Getenv("HOME")

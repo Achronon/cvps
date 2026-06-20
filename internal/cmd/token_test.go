@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/achronon/cvps/internal/api"
+	"github.com/achronon/cvps/internal/config"
 )
 
 func TestParseExpiresIn(t *testing.T) {
@@ -113,4 +119,83 @@ func TestResolveTokenRef(t *testing.T) {
 			t.Fatal("expected not-found error")
 		}
 	})
+}
+
+func TestRunTokenCreateCortexControl(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	var seen api.CreateAPIKeyRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api-keys" || r.Method != "POST" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(api.APIKey{
+			ID:                "key-1",
+			Name:              seen.Name,
+			Key:               "cvps_created_key",
+			KeyPrefix:         "cvps_created",
+			Scopes:            []string{"sandboxes:read", "sandboxes:write", "secrets:attach"},
+			CapabilityProfile: "cortex-control",
+			CreatedAt:         "2026-06-20T10:00:00Z",
+			ExpiresAt:         "2026-06-20T11:00:00Z",
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIKey = "session-token-for-tests"
+	cfg.APIBaseURL = server.URL
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	stdoutR, stdoutW, _ := os.Pipe()
+	stderrR, stderrW, _ := os.Pipe()
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		tokenCreateName = ""
+		tokenCreateScopes = nil
+		tokenCreateExpiresIn = ""
+		tokenCreateExpiresAt = ""
+		tokenCreateCortex = false
+	}()
+
+	tokenCreateName = "cortex"
+	tokenCreateScopes = nil
+	tokenCreateExpiresIn = ""
+	tokenCreateExpiresAt = ""
+	tokenCreateCortex = true
+
+	err := runTokenCreate(nil, nil)
+	stdoutW.Close()
+	stderrW.Close()
+	stdoutBytes, _ := io.ReadAll(stdoutR)
+	stderrBytes, _ := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatalf("runTokenCreate: %v", err)
+	}
+
+	if seen.CapabilityProfile != "cortex-control" {
+		t.Fatalf("Expected cortex-control payload profile, got %q", seen.CapabilityProfile)
+	}
+	if strings.TrimSpace(string(stdoutBytes)) != "cvps_created_key" {
+		t.Fatalf("Expected key on stdout only, got %q", string(stdoutBytes))
+	}
+	if strings.Contains(string(stderrBytes), "cvps_created_key") {
+		t.Fatal("stderr should not contain token material")
+	}
+	if !strings.Contains(string(stderrBytes), "Profile: cortex-control") {
+		t.Fatalf("stderr should mention profile, got %q", string(stderrBytes))
+	}
 }
