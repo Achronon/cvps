@@ -9,22 +9,24 @@ import (
 // present in the response to CreateApiKey (and is never stored or echoed
 // by any other endpoint).
 type APIKey struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Key       string   `json:"key,omitempty"` // only on creation
-	KeyPrefix string   `json:"keyPrefix"`
-	Scopes    []string `json:"scopes"`
-	CreatedAt string   `json:"createdAt"`
-	ExpiresAt string   `json:"expiresAt,omitempty"`
-	LastUsed  string   `json:"lastUsedAt,omitempty"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Key               string   `json:"key,omitempty"` // only on creation
+	KeyPrefix         string   `json:"keyPrefix"`
+	Scopes            []string `json:"scopes"`
+	CapabilityProfile string   `json:"capabilityProfile,omitempty"`
+	CreatedAt         string   `json:"createdAt"`
+	ExpiresAt         string   `json:"expiresAt,omitempty"`
+	LastUsed          string   `json:"lastUsedAt,omitempty"`
 }
 
 // CreateAPIKeyRequest is the payload of POST /api-keys. When Scopes is
 // omitted the backend defaults to ["sandboxes:read", "sandboxes:write"].
 type CreateAPIKeyRequest struct {
-	Name      string   `json:"name"`
-	Scopes    []string `json:"scopes,omitempty"`
-	ExpiresAt string   `json:"expiresAt,omitempty"` // ISO 8601
+	Name              string   `json:"name"`
+	Scopes            []string `json:"scopes,omitempty"`
+	ExpiresAt         string   `json:"expiresAt,omitempty"` // ISO 8601
+	CapabilityProfile string   `json:"capabilityProfile,omitempty"`
 }
 
 // CreateAPIKey mints a new API key. The returned APIKey.Key is the only

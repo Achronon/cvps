@@ -207,6 +207,29 @@ func TestDeleteSandbox(t *testing.T) {
 	}
 }
 
+func TestDeleteSandboxWithGrant(t *testing.T) {
+	const grant = "cvps_dgrant_test"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Expected DELETE request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sb-123" {
+			t.Errorf("Expected path /sandboxes/sb-123, got %s", r.URL.Path)
+		}
+		if got := r.Header.Get(destructiveGrantHeader); got != grant {
+			t.Errorf("Expected destructive grant header %q, got %q", grant, got)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	if err := client.DeleteSandboxWithGrant(context.Background(), "sb-123", grant); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
 func TestListSandboxAllowRules(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {

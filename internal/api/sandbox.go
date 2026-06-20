@@ -108,6 +108,8 @@ type SandboxList struct {
 	Limit int       `json:"limit"`
 }
 
+const destructiveGrantHeader = "X-CVPS-Destructive-Grant"
+
 func (c *Client) CreateSandbox(ctx context.Context, req *CreateSandboxRequest) (*Sandbox, error) {
 	var sandbox Sandbox
 	if err := c.Post(ctx, "/sandboxes", req, &sandbox); err != nil {
@@ -142,7 +144,25 @@ func (c *Client) GetSandboxStatus(ctx context.Context, id string) (*Sandbox, err
 }
 
 func (c *Client) DeleteSandbox(ctx context.Context, id string) error {
-	return c.Delete(ctx, "/sandboxes/"+id)
+	return c.DeleteSandboxWithGrant(ctx, id, "")
+}
+
+func (c *Client) DeleteSandboxWithGrant(ctx context.Context, id, grant string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/sandboxes/"+id, nil)
+	if err != nil {
+		return err
+	}
+	if grant != "" {
+		req.Header.Set(destructiveGrantHeader, grant)
+	}
+
+	resp, err := c.doAuthenticatedRequest(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return c.checkResponse(resp)
 }
 
 // GetSandboxLogs fetches recent main-container logs (service sandboxes resolve
