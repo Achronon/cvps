@@ -24,6 +24,11 @@ type SandboxRuntimeProfile struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+type SandboxSecret struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
 type Sandbox struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -38,6 +43,7 @@ type Sandbox struct {
 	// from the inactivity reaper; readiness usually gates on in-sandbox model auth).
 	ServiceMode    bool                   `json:"serviceMode,omitempty"`
 	RuntimeProfile *SandboxRuntimeProfile `json:"runtimeProfile,omitempty"`
+	Secrets        []SandboxSecret        `json:"secrets,omitempty"`
 
 	// Dedicated egress IP, when one is assigned (auto-claimed from the
 	// plan's included IP or explicitly requested with useDedicatedIp).

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -184,6 +185,23 @@ func printSandboxDetails(s *api.Sandbox) {
 
 	if ip := dedicatedIPOf(s); ip != "" {
 		fmt.Printf("Dedicated IP: %s\n", ip)
+		fmt.Println()
+	}
+
+	if len(s.Secrets) > 0 {
+		secrets := append([]api.SandboxSecret(nil), s.Secrets...)
+		sort.Slice(secrets, func(i, j int) bool {
+			return secrets[i].Key < secrets[j].Key
+		})
+
+		fmt.Println("Attached Secrets:")
+		for _, secret := range secrets {
+			if secret.Name != "" && secret.Name != secret.Key {
+				fmt.Printf("  %s (%s)\n", secret.Key, secret.Name)
+			} else {
+				fmt.Printf("  %s\n", secret.Key)
+			}
+		}
 		fmt.Println()
 	}
 
