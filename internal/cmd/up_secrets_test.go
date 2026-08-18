@@ -60,62 +60,26 @@ func TestParseEnvOverrides(t *testing.T) {
 	})
 }
 
-func newSecretsListServer(t *testing.T, secrets []api.Secret) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/secrets" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		json.NewEncoder(w).Encode(api.SecretList{
-			Data:  secrets,
-			Total: len(secrets),
-			Page:  1,
-			Limit: 100,
-		})
-	}))
-}
-
-func TestResolveSecretKeys(t *testing.T) {
-	server := newSecretsListServer(t, []api.Secret{
-		{ID: "sec-1", Key: "TELEGRAM_BOT_TOKEN"},
-		{ID: "sec-2", Key: "ANTHROPIC_API_KEY"},
-	})
-	defer server.Close()
-	client := api.NewClient(server.URL, "test-key")
-	ctx := context.Background()
-
+func TestValidateSecretKeys(t *testing.T) {
 	t.Run("no keys", func(t *testing.T) {
-		ids, err := resolveSecretKeys(ctx, client, nil)
-		if err != nil || ids != nil {
-			t.Errorf("expected nil/nil, got %v/%v", ids, err)
+		keys, err := validateSecretKeys(nil)
+		if err != nil || keys != nil {
+			t.Errorf("expected nil/nil, got %v/%v", keys, err)
 		}
 	})
 
-	t.Run("resolves and dedupes", func(t *testing.T) {
-		ids, err := resolveSecretKeys(ctx, client, []string{"TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN"})
+	t.Run("dedupes valid keys", func(t *testing.T) {
+		keys, err := validateSecretKeys([]string{"TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(ids) != 2 || ids[0] != "sec-1" || ids[1] != "sec-2" {
-			t.Errorf("unexpected ids: %v", ids)
-		}
-	})
-
-	t.Run("unknown key fails with create hint", func(t *testing.T) {
-		_, err := resolveSecretKeys(ctx, client, []string{"NOPE_KEY"})
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if !strings.Contains(err.Error(), "cvps secret create NOPE_KEY") {
-			t.Errorf("expected create hint in error, got: %v", err)
+		if len(keys) != 2 || keys[0] != "TELEGRAM_BOT_TOKEN" || keys[1] != "ANTHROPIC_API_KEY" {
+			t.Errorf("unexpected keys: %v", keys)
 		}
 	})
 
 	t.Run("invalid key shape fails before any API call", func(t *testing.T) {
-		badClient := api.NewClient("http://127.0.0.1:1", "test-key") // unreachable
-		_, err := resolveSecretKeys(ctx, badClient, []string{"not-a-key"})
+		_, err := validateSecretKeys([]string{"not-a-key"})
 		if err == nil || !strings.Contains(err.Error(), "invalid --secret key") {
 			t.Errorf("expected client-side validation error, got: %v", err)
 		}
@@ -135,18 +99,16 @@ func TestRunUp_WithSecretsAndEnv(t *testing.T) {
 	var gotReq api.CreateSandboxRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/secrets":
-			json.NewEncoder(w).Encode(api.SecretList{
-				Data:  []api.Secret{{ID: "sec-tg", Key: "TELEGRAM_BOT_TOKEN"}},
-				Total: 1, Page: 1, Limit: 100,
-			})
 		case "/sandboxes":
 			json.NewDecoder(r.Body).Decode(&gotReq)
 			json.NewEncoder(w).Encode(api.Sandbox{ID: "sbx-1", Name: gotReq.Name, Status: "provisioning"})
 		case "/sandboxes/sbx-1/status":
 			json.NewEncoder(w).Encode(map[string]string{"status": "RUNNING"})
 		case "/sandboxes/sbx-1":
-			json.NewEncoder(w).Encode(api.Sandbox{ID: "sbx-1", Name: "with-secrets", Status: "RUNNING"})
+			json.NewEncoder(w).Encode(api.Sandbox{
+				ID: "sbx-1", Name: "with-secrets", Status: "RUNNING",
+				Secrets: []api.SandboxSecret{{Key: "TELEGRAM_BOT_TOKEN"}},
+			})
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -178,15 +140,59 @@ func TestRunUp_WithSecretsAndEnv(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(gotReq.SecretIDs) != 1 || gotReq.SecretIDs[0] != "sec-tg" {
-		t.Errorf("expected secretIds [sec-tg], got %v", gotReq.SecretIDs)
+	if len(gotReq.SecretKeys) != 1 || gotReq.SecretKeys[0] != "TELEGRAM_BOT_TOKEN" {
+		t.Errorf("expected secretKeys [TELEGRAM_BOT_TOKEN], got %v", gotReq.SecretKeys)
+	}
+	if len(gotReq.SecretIDs) != 0 {
+		t.Errorf("expected no secret IDs, got %v", gotReq.SecretIDs)
 	}
 	if gotReq.EnvOverrides["CAPTURE_MODE"] != "auto" {
 		t.Errorf("expected envOverrides CAPTURE_MODE=auto, got %v", gotReq.EnvOverrides)
 	}
 }
 
-func TestRunUp_UnknownSecretFailsBeforeCreate(t *testing.T) {
+func TestVerifySecretAttachmentsRejectsMissingKeys(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(api.Sandbox{
+			ID: "sbx-verify", Secrets: []api.SandboxSecret{{Key: "PRESENT_KEY"}},
+		})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test-key")
+	err := verifySecretAttachments(
+		context.Background(),
+		client,
+		"sbx-verify",
+		[]string{"PRESENT_KEY", "MISSING_KEY"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "MISSING_KEY") {
+		t.Fatalf("expected missing-key verification error, got %v", err)
+	}
+}
+
+func TestVerifySecretAttachmentsReportsReadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{
+			"statusCode": 500,
+			"error":      "internal_error",
+			"message":    "temporary failure",
+		})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "test-key")
+	err := verifySecretAttachments(
+		context.Background(), client, "sbx-verify", []string{"PRESENT_KEY"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "could not be verified") {
+		t.Fatalf("expected verification read error, got %v", err)
+	}
+}
+
+func TestRunUp_SendsUnknownSecretKeyToBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
@@ -197,13 +203,22 @@ func TestRunUp_UnknownSecretFailsBeforeCreate(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	createCalled := false
+	var gotReq api.CreateSandboxRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/secrets":
-			json.NewEncoder(w).Encode(api.SecretList{Data: nil, Total: 0, Page: 1, Limit: 100})
 		case "/sandboxes":
 			createCalled = true
-			http.Error(w, "should not be called", http.StatusInternalServerError)
+			json.NewDecoder(r.Body).Decode(&gotReq)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{
+				"statusCode": 404,
+				"error":      "secret_key_not_found",
+				"message":    "Secrets not found by key: MISSING_KEY",
+			})
+		case "/secrets":
+			t.Errorf("cvps up must not enumerate /secrets")
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -234,7 +249,13 @@ func TestRunUp_UnknownSecretFailsBeforeCreate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown secret key")
 	}
-	if createCalled {
-		t.Error("sandbox create must not be called when secret resolution fails")
+	if !createCalled {
+		t.Error("sandbox create should receive the key so the backend can resolve it")
+	}
+	if len(gotReq.SecretKeys) != 1 || gotReq.SecretKeys[0] != "MISSING_KEY" {
+		t.Errorf("expected backend to receive MISSING_KEY, got %v", gotReq.SecretKeys)
+	}
+	if !strings.Contains(err.Error(), "cvps secret create <KEY>") {
+		t.Errorf("expected actionable secret-create hint, got: %v", err)
 	}
 }

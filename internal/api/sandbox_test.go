@@ -64,6 +64,40 @@ func TestCreateSandbox(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxRequestCarriesSecretKeys(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/sandboxes" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("Failed to decode request: %v", err)
+		}
+		var secretKeys []string
+		if err := json.Unmarshal(raw["secretKeys"], &secretKeys); err != nil {
+			t.Fatalf("secretKeys missing or malformed: %v", err)
+		}
+		if len(secretKeys) != 2 || secretKeys[0] != "TELEGRAM_BOT_TOKEN" || secretKeys[1] != "LINEAR_GUARD_API_KEY" {
+			t.Errorf("unexpected secret keys: %v", secretKeys)
+		}
+		if _, present := raw["secretIds"]; present {
+			t.Errorf("secretIds must be absent from the key-based request")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{ID: "sb-keys", Name: "cortex-brain", Status: "creating"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	_, err := client.CreateSandbox(context.Background(), &CreateSandboxRequest{
+		Name:       "cortex-brain",
+		SecretKeys: []string{"TELEGRAM_BOT_TOKEN", "LINEAR_GUARD_API_KEY"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
 func TestListSandboxes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
