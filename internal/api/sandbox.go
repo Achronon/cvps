@@ -70,9 +70,15 @@ type CreateSandboxRequest struct {
 	// Runtime profile to provision from (resolved from --profile <slug>).
 	RuntimeProfileID string `json:"runtimeProfileId,omitempty"`
 
-	// TenantSecret ids to inject as environment variables (resolved from
-	// repeatable --secret <KEY> flags; attach is create-time only).
+	// Legacy TenantSecret ids to inject as environment variables. The CLI's
+	// repeatable --secret <KEY> flags use SecretKeys below; retain this field
+	// for callers that still address secrets by ID.
 	SecretIDs []string `json:"secretIds,omitempty"`
+
+	// Known tenant secret keys to resolve server-side under secrets:attach.
+	// This avoids requiring the caller to enumerate secrets:read just to attach
+	// explicitly requested keys.
+	SecretKeys []string `json:"secretKeys,omitempty"`
 
 	// Per-sandbox env overrides (repeatable --env KEY=VALUE flags). Keys
 	// must be in the runtime profile's tenantEnvKeys allowlist (HLM-368).

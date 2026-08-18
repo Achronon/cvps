@@ -66,7 +66,7 @@ func init() {
 	upCmd.Flags().BoolVar(&upDedicatedIP, "dedicated-ip", false, "request a dedicated egress IP (requires --accept-aup)")
 	upCmd.Flags().BoolVar(&upAcceptAup, "accept-aup", false, "accept the dedicated-IP / outbound-email Acceptable Use Policy")
 	upCmd.Flags().StringVar(&upProfile, "profile", "", "runtime profile slug (e.g. cortex); default is the server-side default profile")
-	upCmd.Flags().StringArrayVar(&upSecrets, "secret", nil, "attach an existing tenant secret by key (repeatable; see 'cvps secret list')")
+	upCmd.Flags().StringArrayVar(&upSecrets, "secret", nil, "attach an existing tenant secret by key (repeatable; resolved server-side)")
 	upCmd.Flags().StringArrayVar(&upEnv, "env", nil, "set a non-secret env override as KEY=VALUE (repeatable; keys must be allowlisted by the runtime profile)")
 }
 
@@ -114,10 +114,10 @@ func runUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve --secret keys to TenantSecret ids up-front: attach is
-	// create-time only, so an unknown key must fail fast with no sandbox
-	// half-created.
-	secretIDs, err := resolveSecretKeys(ctx, client, upSecrets)
+	// Validate --secret keys locally, then let the backend resolve them under
+	// secrets:attach. Enumerating /secrets here would require secrets:read and
+	// would defeat the least-privilege Cortex control profile.
+	secretKeys, err := validateSecretKeys(upSecrets)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 		StorageGB:      upStorage,
 		UseDedicatedIp: upDedicatedIP,
 		AcceptedAup:    upAcceptAup,
-		SecretIDs:      secretIDs,
+		SecretKeys:     secretKeys,
 		EnvOverrides:   envOverrides,
 	}
 	if profile != nil {
@@ -156,13 +156,28 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	sandbox, err := client.CreateSandbox(ctx, req)
 	if err != nil {
+		recoveryHint := createFailureRecoveryHint(err, len(secretKeys) > 0)
 		if hint := createErrorHint(err); hint != "" {
+			if recoveryHint != "" {
+				return fmt.Errorf("failed to create sandbox with requested secret keys: %w\n\n%s\n\n%s", err, hint, recoveryHint)
+			}
 			return fmt.Errorf("failed to create sandbox: %w\n\n%s", err, hint)
+		}
+		if recoveryHint != "" {
+			return fmt.Errorf("failed to create sandbox with requested secret keys: %w\n\n%s", err, recoveryHint)
 		}
 		return fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
 	fmt.Printf("Sandbox created: %s\n", sandbox.ID)
+	if len(secretKeys) > 0 {
+		if err := verifySecretAttachments(ctx, client, sandbox.ID, secretKeys); err != nil {
+			if contextErr := saveLocalContext(sandbox.ID, sandbox.Name); contextErr != nil {
+				return fmt.Errorf("%w; failed to save sandbox context: %v", err, contextErr)
+			}
+			return fmt.Errorf("%w; context saved — use 'cvps status %s' to inspect it, then 'cvps secret attach <KEY> --sandbox %s' or 'cvps down %s' as appropriate", err, sandbox.ID, sandbox.ID, sandbox.ID)
+		}
+	}
 	if ip := dedicatedIPOf(sandbox); ip != "" {
 		fmt.Printf("Dedicated IP: %s\n", ip)
 	}
@@ -277,9 +292,10 @@ func parseEnvOverrides(pairs []string) (map[string]string, error) {
 	return overrides, nil
 }
 
-// resolveSecretKeys resolves repeatable --secret <KEY> flags to TenantSecret
-// ids, failing fast (before sandbox creation) on any unknown key.
-func resolveSecretKeys(ctx context.Context, client *api.Client, keys []string) ([]string, error) {
+// validateSecretKeys validates repeatable --secret <KEY> flags without
+// enumerating tenant secrets. The backend performs the tenant-scoped lookup
+// during create, before any sandbox is persisted.
+func validateSecretKeys(keys []string) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -290,30 +306,65 @@ func resolveSecretKeys(ctx context.Context, client *api.Client, keys []string) (
 		}
 	}
 
-	// One list call resolves all keys (and dedupes repeats).
-	secrets, err := client.ListAllSecrets(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list secrets: %w", err)
-	}
-	byKey := make(map[string]string, len(secrets))
-	for _, s := range secrets {
-		byKey[s.Key] = s.ID
-	}
-
-	var ids []string
+	var validated []string
 	seen := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		id, ok := byKey[key]
-		if !ok {
-			return nil, fmt.Errorf("no secret found with key %s.\n\nCreate it first:\n  cvps secret create %s\nor list available keys with 'cvps secret list'", key, key)
-		}
-		ids = append(ids, id)
+		validated = append(validated, key)
 	}
-	return ids, nil
+	return validated, nil
+}
+
+// verifySecretAttachments confirms that the backend understood the key-based
+// create contract and attached every requested key. The detail response only
+// contains secret metadata (keys/names), never secret values, and this is a
+// scoped sandbox read rather than a tenant-wide secret enumeration.
+func verifySecretAttachments(ctx context.Context, client *api.Client, sandboxID string, requestedKeys []string) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		sandbox, err := client.GetSandbox(ctx, sandboxID)
+		if err != nil {
+			lastErr = fmt.Errorf("sandbox %s was created, but secret attachment could not be verified: %w", sandboxID, err)
+		} else {
+			attached := make(map[string]struct{}, len(sandbox.Secrets))
+			for _, secret := range sandbox.Secrets {
+				attached[secret.Key] = struct{}{}
+			}
+
+			missing := make([]string, 0, len(requestedKeys))
+			for _, key := range requestedKeys {
+				if _, ok := attached[key]; !ok {
+					missing = append(missing, key)
+				}
+			}
+			if len(missing) == 0 {
+				return nil
+			}
+			lastErr = fmt.Errorf(
+				"sandbox %s was created, but requested secret keys were not attached: %s",
+				sandboxID,
+				strings.Join(missing, ", "),
+			)
+		}
+		if attempt < 2 {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	return fmt.Errorf("%w; check the backend/CLI versions before using this sandbox", lastErr)
+}
+
+func createFailureRecoveryHint(err error, requestedSecrets bool) string {
+	if !requestedSecrets {
+		return ""
+	}
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode > 0 && apiErr.StatusCode < 500 {
+		return ""
+	}
+	return "If the backend created a sandbox before reporting the error, check 'cvps status --all' for a stray sandbox before retrying."
 }
 
 // createErrorHint maps backend error codes from POST /sandboxes to
@@ -338,6 +389,8 @@ func createErrorHint(err error) string {
 		return "Multi-factor authentication is required for dedicated-IP sandboxes.\nEnable MFA in the dashboard under Settings, then retry."
 	case "unsupported_runtime_for_create":
 		return "This runtime profile isn't enabled for self-serve creation. Gated\nprofiles (e.g. agent services like cortex) need the operator to enable\nthem (SELF_SERVE_EXTRA_RUNTIME_SLUGS on the backend)."
+	case "secret_key_not_found":
+		return "One or more requested secret keys do not exist. Create each missing secret first with\n  cvps secret create <KEY>\nthen retry the sandbox create."
 	case "capacity_exhausted":
 		return "The CVPS cluster does not currently have enough free capacity for this\nsandbox shape. Retry with a smaller --cpu, --memory, or --storage value, or\nask an operator to inspect admin/billing/capacity/sandbox before changing\ninfra capacity."
 	}
