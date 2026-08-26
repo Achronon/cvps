@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/achronon/cvps/internal/api"
 	"github.com/achronon/cvps/internal/config"
@@ -12,6 +13,12 @@ import (
 
 var deployImage string
 
+// Service image deploys are synchronous because the API health-gates the new
+// revision and rolls back before returning. Keep this above the backend's
+// documented 120s gate (and allow for image pulls and network variance), while
+// leaving the ordinary client timeout unchanged for other commands.
+const deployHTTPTimeout = 5 * time.Minute
+
 var deployCmd = &cobra.Command{
 	Use:   "deploy [sandbox-id|name]",
 	Short: "Deploy an image to a service sandbox",
@@ -19,8 +26,8 @@ var deployCmd = &cobra.Command{
 
 The backend validates image ownership and architecture, health-gates the new
 revision, and automatically rolls back if the new workload does not become
-healthy. An errored service can be repaired in place without deleting its
-workspace.
+healthy. The command waits up to five minutes for that synchronous gate. An
+errored service can be repaired in place without deleting its workspace.
 
 Without a sandbox ID or name, uses the current context (.cvps.yaml).`,
 	Example: `  # Deploy to the current service sandbox
@@ -51,7 +58,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not logged in. Run 'cvps login' or set CVPS_API_TOKEN")
 	}
 
-	client, err := api.NewClientFromConfig(cfg)
+	client, err := api.NewClientFromConfig(cfg, api.WithTimeout(deployHTTPTimeout))
 	if err != nil {
 		return err
 	}
