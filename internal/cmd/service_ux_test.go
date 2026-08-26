@@ -324,6 +324,32 @@ func TestRunStop(t *testing.T) {
 	}
 }
 
+func TestRunDeploy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandboxes/sbx-svc-1/deploy" {
+			t.Errorf("unexpected deploy request: %s %s", r.Method, r.URL.Path)
+		}
+		var req api.DeploySandboxRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode deploy request: %v", err)
+		}
+		if req.Image != "ghcr.io/achronon/trading-bot:v2@sha256:"+strings.Repeat("a", 64) {
+			t.Errorf("unexpected deploy image: %q", req.Image)
+		}
+		json.NewEncoder(w).Encode(api.Sandbox{ID: "sbx-svc-1", Status: "RUNNING"})
+	}))
+	defer server.Close()
+
+	setupTestEnv(t, server)
+	oldImage := deployImage
+	deployImage = "ghcr.io/achronon/trading-bot:v2@sha256:" + strings.Repeat("a", 64)
+	t.Cleanup(func() { deployImage = oldImage })
+
+	if err := runDeploy(nil, []string{"sbx-svc-1"}); err != nil {
+		t.Fatalf("runDeploy: %v", err)
+	}
+}
+
 func TestRunRestart_NotRunningHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sandboxes/svc-1/restart" {

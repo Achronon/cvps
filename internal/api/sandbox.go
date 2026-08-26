@@ -90,6 +90,13 @@ type CreateSandboxRequest struct {
 	AcceptedAup    bool `json:"acceptedAup,omitempty"`
 }
 
+// DeploySandboxRequest is the health-gated image repin request for a service
+// sandbox. The backend enforces registry ownership, architecture, and digest
+// requirements for verified runtimes.
+type DeploySandboxRequest struct {
+	Image string `json:"image"`
+}
+
 // SandboxLogs is the response of GET /sandboxes/:id/logs.
 type SandboxLogs struct {
 	PodName string `json:"podName"`
@@ -206,6 +213,16 @@ func (c *Client) StartSandbox(ctx context.Context, id string) (*Sandbox, error) 
 func (c *Client) StopSandbox(ctx context.Context, id string) (*Sandbox, error) {
 	var sandbox Sandbox
 	if err := c.Post(ctx, "/sandboxes/"+id+"/stop", nil, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
+}
+
+// DeploySandbox replaces a service sandbox image through the backend's
+// health-gated, auto-rollback path.
+func (c *Client) DeploySandbox(ctx context.Context, id string, req *DeploySandboxRequest) (*Sandbox, error) {
+	var sandbox Sandbox
+	if err := c.Post(ctx, "/sandboxes/"+id+"/deploy", req, &sandbox); err != nil {
 		return nil, err
 	}
 	return &sandbox, nil
