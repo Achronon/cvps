@@ -191,6 +191,26 @@ func (c *Client) GetSandboxLogs(ctx context.Context, id string, tailLines int) (
 	return &logs, nil
 }
 
+// StartSandbox starts a stopped sandbox or retries provisioning for an errored
+// sandbox. The backend preserves the sandbox identity and workspace volume.
+func (c *Client) StartSandbox(ctx context.Context, id string) (*Sandbox, error) {
+	var sandbox Sandbox
+	if err := c.Post(ctx, "/sandboxes/"+id+"/start", nil, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
+}
+
+// StopSandbox stops a running or provisioning sandbox without deleting its
+// persistent workspace.
+func (c *Client) StopSandbox(ctx context.Context, id string) (*Sandbox, error) {
+	var sandbox Sandbox
+	if err := c.Post(ctx, "/sandboxes/"+id+"/stop", nil, &sandbox); err != nil {
+		return nil, err
+	}
+	return &sandbox, nil
+}
+
 // RestartSandbox bounces the workload (stop + re-provision; service sandboxes
 // scale to zero and re-apply their Deployment).
 func (c *Client) RestartSandbox(ctx context.Context, id string) (*Sandbox, error) {
