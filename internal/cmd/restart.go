@@ -70,7 +70,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		if errors.As(err, &apiErr) &&
 			apiErr.StatusCode == 400 &&
 			strings.Contains(apiErr.Message, "Cannot restart sandbox with status") {
-			return fmt.Errorf("failed to restart sandbox: %w\n\nOnly RUNNING sandboxes can be restarted. For a service that never became\nready, finish its bootstrap first ('cvps connect' then set up model auth),\nor use stop/start from the dashboard", err)
+			return fmt.Errorf("failed to restart sandbox: %w\n\nOnly RUNNING sandboxes can be restarted. For a service that never became\nready, finish its bootstrap first ('cvps connect' then set up model auth),\nor use 'cvps start' to retry a stopped or errored sandbox", err)
 		}
 		return fmt.Errorf("failed to restart sandbox: %w", err)
 	}

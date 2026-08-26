@@ -294,6 +294,36 @@ func TestRunLogs(t *testing.T) {
 	}
 }
 
+func TestRunStart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandboxes/sbx-svc-1/start" {
+			t.Errorf("unexpected start request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(api.Sandbox{ID: "sbx-svc-1", Status: "PROVISIONING"})
+	}))
+	defer server.Close()
+
+	setupTestEnv(t, server)
+	if err := runStart(nil, []string{"sbx-svc-1"}); err != nil {
+		t.Fatalf("runStart: %v", err)
+	}
+}
+
+func TestRunStop(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandboxes/sbx-svc-1/stop" {
+			t.Errorf("unexpected stop request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(api.Sandbox{ID: "sbx-svc-1", Status: "PROVISIONING"})
+	}))
+	defer server.Close()
+
+	setupTestEnv(t, server)
+	if err := runStop(nil, []string{"sbx-svc-1"}); err != nil {
+		t.Fatalf("runStop: %v", err)
+	}
+}
+
 func TestRunRestart_NotRunningHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sandboxes/svc-1/restart" {

@@ -220,6 +220,54 @@ func TestGetSandboxStatus(t *testing.T) {
 	}
 }
 
+func TestStartSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sb-123/start" {
+			t.Errorf("Expected start path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{ID: "sb-123", Status: "PROVISIONING"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.StartSandbox(context.Background(), "sb-123")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if sandbox.ID != "sb-123" || sandbox.Status != "PROVISIONING" {
+		t.Fatalf("unexpected sandbox response: %+v", sandbox)
+	}
+}
+
+func TestStopSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sb-123/stop" {
+			t.Errorf("Expected stop path, got %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{ID: "sb-123", Status: "PROVISIONING"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.StopSandbox(context.Background(), "sb-123")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if sandbox.ID != "sb-123" || sandbox.Status != "PROVISIONING" {
+		t.Fatalf("unexpected sandbox response: %+v", sandbox)
+	}
+}
+
 func TestDeleteSandbox(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "DELETE" {
