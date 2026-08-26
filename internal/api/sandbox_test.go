@@ -268,6 +268,40 @@ func TestStopSandbox(t *testing.T) {
 	}
 }
 
+func TestDeploySandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/sandboxes/sb-123/deploy" {
+			t.Errorf("Expected deploy path, got %s", r.URL.Path)
+		}
+
+		var req DeploySandboxRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Failed to decode request: %v", err)
+		}
+		if req.Image != "ghcr.io/achronon/example:v2" {
+			t.Errorf("Expected image ghcr.io/achronon/example:v2, got %s", req.Image)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Sandbox{ID: "sb-123", Status: "RUNNING"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	sandbox, err := client.DeploySandbox(context.Background(), "sb-123", &DeploySandboxRequest{
+		Image: "ghcr.io/achronon/example:v2",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if sandbox.ID != "sb-123" || sandbox.Status != "RUNNING" {
+		t.Fatalf("unexpected sandbox response: %+v", sandbox)
+	}
+}
+
 func TestDeleteSandbox(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "DELETE" {
