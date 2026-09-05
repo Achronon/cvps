@@ -25,33 +25,26 @@ brew install cvps
 
 `Achronon/tap` maps to `Achronon/homebrew-tap`.
 
-### 2) Add GitHub secret for tap publishing
+### 2) Canonical release publisher
 
-In `Achronon/cvps`, add repository secret:
+The private `Achronon/claudevps` monorepo owns the CLI source under `cli/`
+and publishes versioned binaries and checksums to the public
+`Achronon/cvps` GitHub releases. Publish releases through the monorepo's CLI
+release workflow using its reviewed source commit.
 
-- `HOMEBREW_TAP_TOKEN`
+The public repository's `.github/workflows/build-cli.yml` runs Go tests and
+cross-platform builds on pull requests and `main`. Its outputs are CI
+artifacts, not release assets. It has read-only repository permissions and
+does not run on version tags or publish releases. Do not restore a second
+release writer here: a public tag may point at older distribution-source code
+and replace the canonical binary with a stale build.
 
-Token requirements:
+### 3) Homebrew updates
 
-- Fine-grained PAT
-- Repository access to `Achronon/homebrew-tap`
-- Contents: Read and Write
-
-### 3) Tag-based release process
-
-Create and push a version tag:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This runs `.github/workflows/build-cli.yml` which:
-
-- builds `cvps` binaries for target platforms
-- publishes GitHub Release assets
-- generates `Formula/cvps.rb` with real checksums
-- pushes formula updates to `Achronon/homebrew-tap`
+`Achronon/homebrew-tap` updates its formula through its own scheduled
+`.github/workflows/update-formula.yml`, which polls public releases. The public
+CLI repository does not publish formula updates and needs no tap publishing
+credential.
 
 ## Modern install channels
 
@@ -89,12 +82,12 @@ Cause:
 Fix:
 
 - Create `Achronon/homebrew-tap` as public
-- Confirm token can push to that repo
+- Confirm the tap repository is public and reachable
 
 ### Formula does not update after tag release
 
 Check:
 
-- `HOMEBREW_TAP_TOKEN` exists and has write access
-- Release job completed before Homebrew job
+- The monorepo release job published the expected binaries and checksums
+- The tap repository scheduled update workflow completed successfully
 - Tag is stable (`vX.Y.Z`, not prerelease suffix)
