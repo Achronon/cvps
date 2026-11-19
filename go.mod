@@ -1,6 +1,6 @@
 module github.com/achronon/cvps
 
-go 1.23.4
+go 1.26.11
 
 require (
 	github.com/briandowns/spinner v1.23.0
@@ -36,8 +36,8 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
 

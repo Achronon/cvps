@@ -85,7 +85,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 				if !looksLikeSandboxID(args[0]) {
 					message += fmt.Sprintf(". If you meant a name, use 'cvps connect --name %s'.", args[0])
 				}
-				return fmt.Errorf(message)
+				return fmt.Errorf("%s", message)
 			}
 
 			if connectName != "" {
