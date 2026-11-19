@@ -40,7 +40,7 @@ func resolveSandboxIDByName(ctx context.Context, client *api.Client, name string
 		for _, sandbox := range matches {
 			fmt.Fprintf(&b, "  - %s (%s)\n", sandbox.ID, sandbox.Name)
 		}
-		return "", fmt.Errorf(strings.TrimRight(b.String(), "\n"))
+		return "", fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
 	}
 }
 

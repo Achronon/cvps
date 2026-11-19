@@ -106,7 +106,7 @@ func (c *Client) checkDeviceAuth(ctx context.Context, deviceCode string) (*Token
 			Error string `json:"error"`
 		}
 		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf(errResp.Error)
+		return nil, fmt.Errorf("%s", errResp.Error)
 	}
 
 	var token TokenResponse
